@@ -36,6 +36,8 @@ auto print = reinterpret_cast<PrintFn>(0x4fca50);
 auto load = reinterpret_cast<LoadFn>(0x48a2b0);
 auto args = reinterpret_cast<CmdArgs*>(0x1410b40);
 bool registered = false;
+bool hasLoadedZone = false; // Tracks requests in this process, not the engine zone list.
+constexpr int kZoneFlag = 0x40;
 char activeName[65] = {};
 char activePath[MAX_PATH] = {};
 std::atomic<bool> loading{false};
@@ -79,9 +81,17 @@ void __cdecl loadZone() {
     }
     strcpy_s(activeName, name);
     loading.store(true, std::memory_order_release);
-    XZoneInfo zone{activeName, 0x40, 0};
+    XZoneInfo zones[2]{};
+    unsigned count = 0;
+    if (hasLoadedZone) {
+        // Engine frees *every* zone carrying this flag, not just our previous name.
+        zones[count++] = XZoneInfo{nullptr, 0, kZoneFlag};
+        say("LoadZone: replacing previous zone (free flag 0x40)...\n");
+    }
+    zones[count++] = XZoneInfo{activeName, kZoneFlag, 0};
     say("LoadZone: loading...\n");
-    load(&zone, 1, 1); // Synchronous, as in CoD4QOL.
+    load(zones, count, 1); // Unload first, then synchronously load the new zone.
+    hasLoadedZone = true;  // Return alone is not proof the assets were loaded correctly.
     loading.store(false, std::memory_order_release);
     say("LoadZone: load call returned.\n");
 }
