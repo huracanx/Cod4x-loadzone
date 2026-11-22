@@ -1,0 +1,147 @@
+// Adapted from Rex109/CoD4QOL. See README and LICENSE.md.
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <atomic>
+#include "detours.h"
+#include "common.hpp"
+
+#if !defined(_M_IX86)
+#error This plugin must be built for Win32 (x86).
+#endif
+
+namespace {
+// Offsets for cod4x_021.dll CRC32 b1822ed5 only. Engine addresses are for iw3mp 1.7.
+constexpr uint32_t kSupportedCRC = 0xb1822ed5u;
+constexpr uintptr_t kCmdAddRva = 0x2116c;
+constexpr uintptr_t kInitRva = 0x8327e;
+constexpr uintptr_t kBuildPathRva = 0x37fdf;
+
+struct CmdArgs { int nesting; int localClientNum[8]; int controllerIndex[8]; int argc[8]; const char** argv[8]; };
+union DvarValue { bool enabled; int integer; float value; float vector[4]; const char* string; };
+struct Dvar { const char* name; const char* description; uint16_t flags; int8_t type; bool modified; DvarValue current; };
+struct XZoneInfo { const char* name; int allocFlags; int freeFlags; };
+static_assert(offsetof(Dvar, current) == 12, "Unexpected dvar layout");
+using InitFn = void (__cdecl*)();
+using BuildPathFn = void (__cdecl*)(const char*, int, int, char*);
+using AddCommandFn = void* (__cdecl*)(const char*, void (__cdecl*)());
+using PrintFn = void (__cdecl*)(int, const char*, char);
+using LoadFn = void (__cdecl*)(XZoneInfo*, unsigned, int);
+InitFn originalInit = nullptr;
+BuildPathFn originalBuildPath = nullptr;
+AddCommandFn addCommand = nullptr;
+auto print = reinterpret_cast<PrintFn>(0x4fca50);
+auto load = reinterpret_cast<LoadFn>(0x48a2b0);
+auto args = reinterpret_cast<CmdArgs*>(0x1410b40);
+bool registered = false;
+char activeName[65] = {};
+char activePath[MAX_PATH] = {};
+std::atomic<bool> loading{false};
+
+// Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
+__declspec(naked) Dvar* findDvar(const char*) {
+    __asm {
+        push eax
+        pushad
+        mov edi, [esp + 28h]
+        mov eax, 056B5D0h
+        call eax
+        mov [esp + 20h], eax
+        popad
+        pop eax
+        ret
+    }
+}
+void say(const char* text) { print(0, text, 0); }
+void __cdecl loadZone() {
+    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
+        say("Usage: loadzone <name_without_ff>\n"); return;
+    }
+    const char* name = args->argv[args->nesting][1];
+    if (!valid_zone_name(name)) {
+        say("LoadZone: use 1-64 letters, digits, _ or -; no path or .ff\n"); return;
+    }
+    if (loading.load(std::memory_order_acquire)) {
+        say("LoadZone: another zone is loading\n"); return;
+    }
+    Dvar* home = findDvar("fs_homepath");
+    const char* lang = *reinterpret_cast<const char**>(0xCC147D4);
+    if (!home || !home->current.string || !lang || !*lang) {
+        say("LoadZone: fs_homepath or game language is unavailable\n"); return;
+    }
+    int n = _snprintf_s(activePath, sizeof(activePath), _TRUNCATE, "%s\\zone\\%s\\%s.ff", home->current.string, lang, name);
+    if (n < 0) { say("LoadZone: path too long\n"); return; }
+    DWORD attrs = GetFileAttributesA(activePath);
+    if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        say("LoadZone: .ff not found in fs_homepath/zone/<language>/\n"); return;
+    }
+    strcpy_s(activeName, name);
+    loading.store(true, std::memory_order_release);
+    XZoneInfo zone{activeName, 0x40, 0};
+    say("LoadZone: loading...\n");
+    load(&zone, 1, 1); // Synchronous, as in CoD4QOL.
+    loading.store(false, std::memory_order_release);
+    say("LoadZone: load call returned.\n");
+}
+void __cdecl buildPath(const char* filename, int ffDir, int pathlen, char* path) {
+    if (filename && path && pathlen > 0 && loading.load(std::memory_order_acquire) && _stricmp(filename, activeName) == 0) {
+        strncpy_s(path, static_cast<size_t>(pathlen), activePath, _TRUNCATE);
+        return;
+    }
+    originalBuildPath(filename, ffDir, pathlen, path);
+}
+void __cdecl initHook() {
+    if (!registered) {
+        addCommand("loadzone", loadZone);
+        registered = true;
+    }
+    originalInit();
+}
+bool moduleCRC(HMODULE mod, uint32_t& out) {
+    char path[MAX_PATH];
+    if (!GetModuleFileNameA(mod, path, MAX_PATH)) return false;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") || !f) return false;
+    unsigned char buffer[8192];
+    uint32_t c = 0xffffffffu;
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), f)) != 0) c = crc32_update(c, buffer, n);
+    bool ok = ferror(f) == 0;
+    fclose(f);
+    out = c ^ 0xffffffffu;
+    return ok;
+}
+void initialize(HMODULE self) {
+    if (reinterpret_cast<uintptr_t>(GetModuleHandleA("iw3mp.exe")) != 0x400000) return;
+    HMODULE cod4x = GetModuleHandleA("cod4x_021.dll");
+    uint32_t crc = 0;
+    if (!cod4x || !moduleCRC(cod4x, crc) || crc != kSupportedCRC) {
+        OutputDebugStringA("LoadZone: unsupported/missing cod4x_021.dll; expected CRC32 b1822ed5.\n");
+        return;
+    }
+    auto base = reinterpret_cast<uintptr_t>(cod4x);
+    originalInit = reinterpret_cast<InitFn>(base + kInitRva);
+    originalBuildPath = reinterpret_cast<BuildPathFn>(base + kBuildPathRva);
+    addCommand = reinterpret_cast<AddCommandFn>(base + kCmdAddRva);
+    // ASI loaders may otherwise unload modules after initialization.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                            reinterpret_cast<LPCSTR>(self), &pinned)) return;
+    LONG status = DetourTransactionBegin();
+    if (status != NO_ERROR) return;
+    status = DetourUpdateThread(GetCurrentThread());
+    if (status == NO_ERROR) status = DetourAttach(reinterpret_cast<PVOID*>(&originalInit), reinterpret_cast<PVOID>(initHook));
+    if (status == NO_ERROR) status = DetourAttach(reinterpret_cast<PVOID*>(&originalBuildPath), reinterpret_cast<PVOID>(buildPath));
+    if (status != NO_ERROR) { DetourTransactionAbort(); OutputDebugStringA("LoadZone: hook setup failed.\n"); return; }
+    if (DetourTransactionCommit() != NO_ERROR) OutputDebugStringA("LoadZone: hook commit failed.\n");
+}
+}
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(instance);
+        initialize(instance);
+    }
+    return TRUE;
+}
