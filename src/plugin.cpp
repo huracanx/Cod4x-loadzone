@@ -95,6 +95,28 @@ void __cdecl loadZone() {
     loading.store(false, std::memory_order_release);
     say("LoadZone: load call returned.\n");
 }
+void __cdecl unloadZone() {
+    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] > 1) {
+        say("Usage: unloadzone\n"); return;
+    }
+    if (!hasLoadedZone) {
+        say("UnloadZone: no zone loaded by this command\n"); return;
+    }
+    if (loading.load(std::memory_order_acquire)) {
+        say("UnloadZone: another zone is loading\n"); return;
+    }
+    loading.store(true, std::memory_order_release);
+    XZoneInfo zones[1]{};
+    // Engine frees *every* zone carrying this flag, not just activeName.
+    zones[0] = XZoneInfo{nullptr, 0, kZoneFlag};
+    say("UnloadZone: unloading...\n");
+    load(zones, 1, 1); // freeFlags=0x40, synchronous.
+    hasLoadedZone = false;
+    activeName[0] = '\0';
+    activePath[0] = '\0';
+    loading.store(false, std::memory_order_release);
+    say("UnloadZone: unload call returned.\n");
+}
 void __cdecl buildPath(const char* filename, int ffDir, int pathlen, char* path) {
     if (filename && path && pathlen > 0 && loading.load(std::memory_order_acquire) && _stricmp(filename, activeName) == 0) {
         strncpy_s(path, static_cast<size_t>(pathlen), activePath, _TRUNCATE);
@@ -105,6 +127,7 @@ void __cdecl buildPath(const char* filename, int ffDir, int pathlen, char* path)
 void __cdecl initHook() {
     if (!registered) {
         addCommand("loadzone", loadZone);
+        addCommand("unloadzone", unloadZone);
         registered = true;
     }
     originalInit();
