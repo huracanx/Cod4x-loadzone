@@ -13,82 +13,21 @@
 #endif
 
 namespace {
-// Known CoD4x builds. CRC selects a candidate build; code addresses are
-// resolved from executable-section signatures, never from filename or image base.
-constexpr uint32_t kCRC21_1 = 0xb1822ed5u;
-constexpr uint32_t kCRC21_8 = 0xcb77ae89u;
-// Engine-side addresses below are valid only for the supplied iw3mp.exe build.
-constexpr uint32_t kIw3mpCRC = 0x651accbau;
-
-struct BytePattern {
-    const unsigned char* bytes;
-    const char* mask; // 'x' = exact byte, '?' = wildcard
-    size_t length;
+// Exact offsets for the two supplied CoD4x client builds.
+// The CRC is calculated from the DLL contents, not its filename.
+struct BuildOffsets {
+    uint32_t crc;
+    const char* version;
+    uintptr_t cmdAddRva;
+    uintptr_t initRva;
+    uintptr_t buildPathRva;
 };
-constexpr unsigned char kCmdAddBytes[] = {
-    0x55,0x89,0xe5,0x83,0xec,0x28,0xa1,0x28,0x7a,0x3a,0x63,
-    0x8b,0x00,0x89,0x45,0xf4,0xeb,0x4b,0x8b,0x45,0xf4,0x8b,0x40,0x04
+constexpr BuildOffsets kBuilds[] = {
+    // CoD4x 21.1 (CRC32 B1822ED5)
+    { 0xb1822ed5u, "21.1", 0x2116cu, 0x8327eu, 0x37fdfu },
+    // CoD4x 21.8 (CRC32 CB77AE89)
+    { 0xcb77ae89u, "21.8", 0x5c810u, 0x359b0u, 0x2cf10u },
 };
-constexpr unsigned char kInitBytes[] = {
-    0x55,0x89,0xe5,0x83,0xec,0x78,0xc7,0x45,0xf4,0x00,0x00,0x00,
-    0x00,0xb8,0x10,0xd1,0xc9,0x0c,0x8b,0x48,0x18,0x8b,0x55,0xf4
-};
-constexpr unsigned char kBuildPathBytes[] = {
-    0x55,0x89,0xe5,0x53,0x83,0xec,0x74,0x83,0x7d,0x0c,0x01,
-    0x74,0x0b,0x83,0x7d,0x0c,0x02,0x74,0x44,0xe9,0xb8,0x00,0x00,0x00
-};
-constexpr BytePattern kCmdAddPattern{ kCmdAddBytes, "xxxxxxxxxxxxxxxxxxxxxxxx", sizeof(kCmdAddBytes) };
-constexpr BytePattern kInitPattern{ kInitBytes, "xxxxxxxxxxxxxxxxxxxxxxxx", sizeof(kInitBytes) };
-constexpr BytePattern kBuildPathPattern{ kBuildPathBytes, "xxxxxxxxxxxxxxxxxxxxxxxx", sizeof(kBuildPathBytes) };
-
-bool getExecutableText(HMODULE module, const unsigned char*& begin, size_t& size) {
-    if (!module) return false;
-    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(module);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0) return false;
-    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS32*>(
-        reinterpret_cast<const unsigned char*>(module) + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE ||
-        nt->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 ||
-        nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) return false;
-    const auto* section = IMAGE_FIRST_SECTION(nt);
-    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
-        if (memcmp(section[i].Name, ".text", 5) == 0 &&
-            (section[i].Characteristics & IMAGE_SCN_MEM_EXECUTE) != 0) {
-            const size_t n = section[i].Misc.VirtualSize;
-            if (!n || n > 0x1000000u) return false;
-            begin = reinterpret_cast<const unsigned char*>(module) + section[i].VirtualAddress;
-            size = n;
-            return true;
-        }
-    }
-    return false;
-}
-
-bool patternMatches(const unsigned char* at, const BytePattern& pattern) {
-    for (size_t i = 0; i < pattern.length; ++i)
-        if (pattern.mask[i] == 'x' && at[i] != pattern.bytes[i]) return false;
-    return true;
-}
-
-// A signature is accepted only if exactly one match exists in .text.
-bool findUniquePattern(HMODULE module, const BytePattern& pattern, uintptr_t& rva) {
-    const unsigned char* text = nullptr;
-    size_t textSize = 0;
-    if (!getExecutableText(module, text, textSize) || !pattern.length ||
-        pattern.length > textSize) return false;
-    size_t matches = 0;
-    uintptr_t found = 0;
-    for (size_t i = 0; i <= textSize - pattern.length; ++i) {
-        if (patternMatches(text + i, pattern)) {
-            found = static_cast<uintptr_t>(text + i -
-                reinterpret_cast<const unsigned char*>(module));
-            if (++matches > 1) return false;
-        }
-    }
-    if (matches != 1) return false;
-    rva = found;
-    return true;
-}
 
 struct CmdArgs { int nesting; int localClientNum[8]; int controllerIndex[8]; int argc[8]; const char** argv[8]; };
 union DvarValue { bool enabled; int integer; float value; float vector[4]; const char* string; };
@@ -218,50 +157,35 @@ bool moduleCRC(HMODULE mod, uint32_t& out) {
     return ok;
 }
 void initialize(HMODULE self) {
-    HMODULE exe = GetModuleHandleA("iw3mp.exe");
-    if (!exe || reinterpret_cast<uintptr_t>(exe) != 0x400000) return;
-
-    // print/load/args/findDvar and the language pointer are absolute IW3
-    // addresses. They are only used with this exact executable build.
-    uint32_t exeCrc = 0;
-    if (!moduleCRC(exe, exeCrc) || exeCrc != kIw3mpCRC) {
-        OutputDebugStringA("LoadZone: unsupported iw3mp.exe build; engine addresses are unverified.\\n");
-        return;
-    }
-
+    if (reinterpret_cast<uintptr_t>(GetModuleHandleA("iw3mp.exe")) != 0x400000) return;
     HMODULE cod4x = GetModuleHandleA("cod4x_021.dll");
     uint32_t crc = 0;
     if (!cod4x || !moduleCRC(cod4x, crc)) {
-        OutputDebugStringA("LoadZone: cod4x_021.dll is missing or unreadable.\\n");
-        return;
-    }
-    if (crc != kCRC21_1 && crc != kCRC21_8) {
-        OutputDebugStringA("LoadZone: unsupported cod4x_021.dll CRC32.\\n");
+        OutputDebugStringA("LoadZone: missing/unreadable cod4x_021.dll.\n");
         return;
     }
 
-    uintptr_t initRva = 0, buildPathRva = 0, cmdAddRva = 0;
-    const bool resolved =
-        findUniquePattern(cod4x, kInitPattern, initRva) &&
-        findUniquePattern(cod4x, kBuildPathPattern, buildPathRva) &&
-        findUniquePattern(cod4x, kCmdAddPattern, cmdAddRva);
-    if (!resolved) {
-        OutputDebugStringA("LoadZone: required CoD4x signatures were not uniquely found; refusing hooks.\\n");
-        return;
+    const BuildOffsets* build = nullptr;
+    for (const auto& candidate : kBuilds) {
+        if (candidate.crc == crc) {
+            build = &candidate;
+            break;
+        }
     }
-
-    // These byte signatures have currently been verified only against 21.1.
-    // 21.8 is recognized, but must not be hooked until its own signatures and
-    // function calling conventions have been independently validated.
-    if (crc == kCRC21_8) {
-        OutputDebugStringA("LoadZone: CoD4x 21.8 detected; its signatures are not validated yet. No hooks installed.\\n");
+    if (!build) {
+        OutputDebugStringA("LoadZone: unsupported cod4x_021.dll CRC32; supported builds are 21.1 and 21.8.\n");
         return;
     }
 
     auto base = reinterpret_cast<uintptr_t>(cod4x);
-    originalInit = reinterpret_cast<InitFn>(base + initRva);
-    originalBuildPath = reinterpret_cast<BuildPathFn>(base + buildPathRva);
-    addCommand = reinterpret_cast<AddCommandFn>(base + cmdAddRva);
+    originalInit = reinterpret_cast<InitFn>(base + build->initRva);
+    originalBuildPath = reinterpret_cast<BuildPathFn>(base + build->buildPathRva);
+    addCommand = reinterpret_cast<AddCommandFn>(base + build->cmdAddRva);
+    char message[128];
+    _snprintf_s(message, sizeof(message), _TRUNCATE,
+                "LoadZone: CoD4x %s detected (CRC32 %08X).\n", build->version, crc);
+    OutputDebugStringA(message);
+    // ASI loaders may otherwise unload modules after initialization.
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                             reinterpret_cast<LPCSTR>(self), &pinned)) return;
@@ -270,8 +194,8 @@ void initialize(HMODULE self) {
     status = DetourUpdateThread(GetCurrentThread());
     if (status == NO_ERROR) status = DetourAttach(reinterpret_cast<PVOID*>(&originalInit), reinterpret_cast<PVOID>(initHook));
     if (status == NO_ERROR) status = DetourAttach(reinterpret_cast<PVOID*>(&originalBuildPath), reinterpret_cast<PVOID>(buildPath));
-    if (status != NO_ERROR) { DetourTransactionAbort(); OutputDebugStringA("LoadZone: hook setup failed.\\n"); return; }
-    if (DetourTransactionCommit() != NO_ERROR) OutputDebugStringA("LoadZone: hook commit failed.\\n");
+    if (status != NO_ERROR) { DetourTransactionAbort(); OutputDebugStringA("LoadZone: hook setup failed.\n"); return; }
+    if (DetourTransactionCommit() != NO_ERROR) OutputDebugStringA("LoadZone: hook commit failed.\n");
 }
 }
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
