@@ -21,12 +21,13 @@ struct BuildOffsets {
     uintptr_t cmdAddRva;
     uintptr_t initRva;
     uintptr_t buildPathRva;
+    uintptr_t validateIwdRva;
 };
 constexpr BuildOffsets kBuilds[] = {
     // CoD4x 21.1 (CRC32 B1822ED5)
-    { 0xb1822ed5u, "21.1", 0x2116cu, 0x8327eu, 0x37fdfu },
+    { 0xb1822ed5u, "21.1", 0x2116cu, 0x8327eu, 0x37fdfu, 0x3aa7cu },
     // CoD4x 21.8 (CRC32 CB77AE89)
-    { 0xcb77ae89u, "21.8", 0x5c810u, 0x359b0u, 0x2cf10u },
+    { 0xcb77ae89u, "21.8", 0x5c810u, 0x359b0u, 0x2cf10u, 0x30b40u },
 };
 
 struct CmdArgs { int nesting; int localClientNum[8]; int controllerIndex[8]; int argc[8]; const char** argv[8]; };
@@ -142,6 +143,15 @@ void __cdecl initHook() {
     }
     originalInit();
 }
+// Applies a single-byte patch inside the cod4x client module.
+bool patchByte(uintptr_t address, unsigned char value) {
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(reinterpret_cast<LPVOID>(address), 1, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    *reinterpret_cast<unsigned char*>(address) = value;
+    DWORD ignored = 0;
+    VirtualProtect(reinterpret_cast<LPVOID>(address), 1, oldProtect, &ignored);
+    return true;
+}
 bool moduleCRC(HMODULE mod, uint32_t& out) {
     char path[MAX_PATH];
     if (!GetModuleFileNameA(mod, path, MAX_PATH)) return false;
@@ -178,6 +188,16 @@ void initialize(HMODULE self) {
     }
 
     auto base = reinterpret_cast<uintptr_t>(cod4x);
+    // Neutralize the startup IWD validation (FS_ValidateIwdFiles): it compares
+    // every loaded .iwd against a hardcoded list of stock checksums and shows an
+    // "Invalid IWD files detected!" error for any custom archive found in main/.
+    // A single RET at the function entry disables the whole check; the function
+    // runs long after DLL load, so patching it here is safe.
+    if (patchByte(base + build->validateIwdRva, 0xc3)) {
+        OutputDebugStringA("LoadZone: startup IWD validation disabled.\n");
+    } else {
+        OutputDebugStringA("LoadZone: failed to disable startup IWD validation.\n");
+    }
     originalInit = reinterpret_cast<InitFn>(base + build->initRva);
     originalBuildPath = reinterpret_cast<BuildPathFn>(base + build->buildPathRva);
     addCommand = reinterpret_cast<AddCommandFn>(base + build->cmdAddRva);
