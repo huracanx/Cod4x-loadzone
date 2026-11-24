@@ -29,12 +29,19 @@ constexpr BuildOffsets kBuilds[] = {
     { 0xcb77ae89u, "21.8", 0x5c810u, 0x359b0u, 0x2cf10u, 0x30b40u },
 };
 
-struct CmdArgs { int nesting; int localClientNum[8]; int controllerIndex[8]; int argc[8]; const char** argv[8]; };
+struct CmdArgs {
+    int nesting;
+    int localClientNum[8];
+    int controllerIndex[8];
+    int argc[8];
+    const char** argv[8];
+};
 using InitFn = void (__cdecl*)();
 using BuildPathFn = void (__cdecl*)(const char*, int, int, char*);
 using AddCommandFn = void* (__cdecl*)(const char*, void (__cdecl*)());
 using PrintFn = void (__cdecl*)(int, const char*, char);
 using LoadFn = void (__cdecl*)(XZoneInfo*, unsigned, int);
+
 InitFn originalInit = nullptr;
 BuildPathFn originalBuildPath = nullptr;
 AddCommandFn addCommand = nullptr;
@@ -48,7 +55,7 @@ char activeName[65] = {};
 char activePath[MAX_PATH] = {};
 std::atomic<bool> loading{false};
 
-HMODULE g_self = nullptr; // <-- для меню; внутри namespace, но initZoneMenu получает его как параметр
+HMODULE g_self = nullptr; // module handle, передаётся в initZoneMenu
 
 void say(const char* text) { print(0, text, 0); }
 
@@ -61,6 +68,7 @@ bool patchByte(uintptr_t address, unsigned char value) {
     VirtualProtect(reinterpret_cast<LPVOID>(address), 1, oldProtect, &ignored);
     return true;
 }
+
 bool moduleCRC(HMODULE mod, uint32_t& out) {
     char path[MAX_PATH];
     if (!GetModuleFileNameA(mod, path, MAX_PATH)) return false;
@@ -97,6 +105,7 @@ __declspec(naked) Dvar* findDvar(const char*) {
 const char** g_langPtr = reinterpret_cast<const char**>(0xCC147D4);
 
 // Общий загрузчик: используется консолью (loadZone) и меню (zone_menu.cpp).
+// Путь: fs_homepath\zone\<lang>\usermaps\<name>.ff — только пользовательские зоны.
 bool loadZoneByName(const char* name, char* err, size_t errCap) {
     if (!valid_zone_name(name)) {
         _snprintf_s(err, errCap, _TRUNCATE,
@@ -115,8 +124,8 @@ bool loadZoneByName(const char* name, char* err, size_t errCap) {
         return false;
     }
     int n = _snprintf_s(activePath, sizeof(activePath), _TRUNCATE,
-                    "%s\\zone\\%s\\usermaps\\%s.ff",
-                    home->current.string, lang, name);
+                        "%s\\zone\\%s\\usermaps\\%s.ff",
+                        home->current.string, lang, name);
     if (n < 0) {
         _snprintf_s(err, errCap, _TRUNCATE, "LoadZone: path too long\n");
         return false;
@@ -124,7 +133,7 @@ bool loadZoneByName(const char* name, char* err, size_t errCap) {
     DWORD attrs = GetFileAttributesA(activePath);
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
         _snprintf_s(err, errCap, _TRUNCATE,
-            "LoadZone: .ff not found in fs_homepath/zone/<language>/\n");
+            "LoadZone: .ff not found in fs_homepath/zone/<language>/usermaps/\n");
         return false;
     }
     HANDLE h = CreateFileA(activePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
@@ -178,7 +187,7 @@ bool unloadLoadedZone(char* err, size_t errCap) {
     return true;
 }
 
-// --- Внутренние обёртки и хуки ---
+// --- Консольные обёртки и хуки ---
 namespace {
 void __cdecl loadZone() {
     if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
@@ -206,7 +215,7 @@ void __cdecl initHook() {
         addCommand("loadzone", loadZone);
         addCommand("unloadzone", unloadZone);
         registered = true;
-        initZoneMenu(g_self); // <-- меню (F6 по умолчанию, клавиша из loadzone.ini)
+        initZoneMenu(g_self); // ImGui-меню: F6 по умолчанию, клавиша из loadzone.ini
     }
     originalInit();
 }
@@ -253,7 +262,7 @@ void initialize(HMODULE self) {
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                             reinterpret_cast<LPCSTR>(self), &pinned)) return;
-    g_self = self; // <-- для меню
+    g_self = self;
     LONG status = DetourTransactionBegin();
     if (status != NO_ERROR) return;
     status = DetourUpdateThread(GetCurrentThread());
