@@ -21,7 +21,6 @@ struct Settings { UINT toggleKey; };
 Settings g_cfg{ VK_F6 };
 bool     g_registered = false;
 bool     g_visible    = false;
-bool     g_waitingKey = false;
 bool     g_cursorShown = false;
 HMODULE  g_self       = nullptr;
 char     g_dir[MAX_PATH] = {};
@@ -169,7 +168,6 @@ void setCursorVisible(bool visible) {
     }
 }
 
-// Загрузка выполняется в потоке окна (игровом) через WM_APP+100.
 void requestLoad(int idx) {
     if (idx < 0 || idx >= g_count) return;
     if (!g_gameHwnd) return;
@@ -177,7 +175,7 @@ void requestLoad(int idx) {
 }
 
 void drawMenu() {
-    ImGui::SetNextWindowSize(ImVec2(420, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 380), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowFocus();
     ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
@@ -192,7 +190,7 @@ void drawMenu() {
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
     } else {
-        ImGui::BeginChild("list", ImVec2(0, -88), true);
+        ImGui::BeginChild("list", ImVec2(0, -64), true);
         for (int i = 0; i < g_count; ++i) {
             bool selected = (i == g_sel);
             if (ImGui::Selectable(g_entries[i].name, selected,
@@ -204,20 +202,17 @@ void drawMenu() {
         ImGui::EndChild();
     }
     ImGui::Separator();
-    // Кнопки: Load и Change key
     bool canLoad = (g_sel >= 0 && g_sel < g_count);
     if (!canLoad) ImGui::BeginDisabled();
     if (ImGui::Button("Load", ImVec2(90, 0))) requestLoad(g_sel);
     if (!canLoad) ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button(g_waitingKey ? "press key..." : "Change key", ImVec2(120, 0))) {
-        g_waitingKey = true;
+    if (ImGui::Button("Minimize game", ImVec2(130, 0))) {
+        if (g_gameHwnd) ShowWindow(g_gameHwnd, SW_MINIMIZE);
     }
-    // Статус
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
-        (g_waitingKey ? "Press a new toggle key (Esc to cancel)"
-                      : "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close"));
+        "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close");
     ImGui::PopStyleColor();
     ImGui::End();
 }
@@ -225,9 +220,7 @@ void drawMenu() {
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
     ImGuiIO& io = ImGui::GetIO();
-
     if (g_visible) {
-        ClipCursor(nullptr);
         POINT p{};
         if (GetCursorPos(&p) && ScreenToClient(g_gameHwnd, &p)) {
             io.MousePos = ImVec2((float)p.x, (float)p.y);
@@ -247,20 +240,6 @@ void renderFrame() {
     }
     ImGui::NewFrame();
     if (g_visible) drawMenu();
-    if (g_waitingKey) {
-        for (int vk = 1; vk <= 0xFE; ++vk) {
-            if (vk == VK_ESCAPE) {
-                if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) { g_waitingKey = false; break; }
-                continue;
-            }
-            if (ImGui::IsKeyPressed((ImGuiKey)vk, false)) {
-                g_cfg.toggleKey = (UINT)vk;
-                if (g_gameHwnd) applyHotkey(g_gameHwnd);
-                g_waitingKey = false;
-                break;
-            }
-        }
-    }
     ImGui::EndFrame();
     ImGui::Render();
     ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
@@ -331,7 +310,8 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_visible) {
             refreshList();
             setCursorVisible(true);
-            SetFocus(hwnd);
+            // Не форсируем foreground — иначе окно «дёргается» и мешает Alt+Tab.
+            if (GetForegroundWindow() == hwnd) SetFocus(hwnd);
         } else {
             setCursorVisible(false);
         }
@@ -340,6 +320,7 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_ACTIVATEAPP && wp == FALSE) {
         if (g_visible) { g_visible = false; setCursorVisible(false); }
     }
+    // Не блокируем SC_MINIMIZE / Alt+Tab и т.п. — просто пробрасываем дальше.
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
 
