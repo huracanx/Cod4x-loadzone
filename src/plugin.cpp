@@ -12,8 +12,6 @@
 #endif
 
 namespace {
-// Exact offsets for the two supplied CoD4x client builds.
-// The CRC is calculated from the DLL contents, not its filename.
 struct BuildOffsets {
     uint32_t crc;
     const char* version;
@@ -23,9 +21,7 @@ struct BuildOffsets {
     uintptr_t validateIwdRva;
 };
 constexpr BuildOffsets kBuilds[] = {
-    // CoD4x 21.1 (CRC32 B1822ED5)
     { 0xb1822ed5u, "21.1", 0x2116cu, 0x8327eu, 0x37fdfu, 0x3aa7cu },
-    // CoD4x 21.8 (CRC32 CB77AE89)
     { 0xcb77ae89u, "21.8", 0x5c810u, 0x359b0u, 0x2cf10u, 0x30b40u },
 };
 
@@ -49,17 +45,16 @@ auto print = reinterpret_cast<PrintFn>(0x4fca50);
 auto load = reinterpret_cast<LoadFn>(0x48a2b0);
 auto args = reinterpret_cast<CmdArgs*>(0x1410b40);
 bool registered = false;
-bool hasLoadedZone = false; // Tracks requests in this process, not the engine zone list.
+bool hasLoadedZone = false;
 constexpr int kZoneFlag = 0x40;
 char activeName[65] = {};
 char activePath[MAX_PATH] = {};
 std::atomic<bool> loading{false};
 
-HMODULE g_self = nullptr; // module handle, передаётся в initZoneMenu
+HMODULE g_self = nullptr;
 
 void say(const char* text) { print(0, text, 0); }
 
-// Applies a single-byte patch inside the cod4x client module.
 bool patchByte(uintptr_t address, unsigned char value) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(reinterpret_cast<LPVOID>(address), 1, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
@@ -85,8 +80,6 @@ bool moduleCRC(HMODULE mod, uint32_t& out) {
 }
 } // namespace
 
-// --- Глобальные определения, объявленные в common.hpp ---
-// findDvar: Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
 __declspec(naked) Dvar* findDvar(const char*) {
     __asm {
         push eax
@@ -101,11 +94,8 @@ __declspec(naked) Dvar* findDvar(const char*) {
     }
 }
 
-// Указатель на строку языка игры (0xCC147D4).
 const char** g_langPtr = reinterpret_cast<const char**>(0xCC147D4);
 
-// Общий загрузчик: используется консолью (loadZone) и меню (zone_menu.cpp).
-// Путь: fs_homepath\zone\<lang>\usermaps\<name>.ff — только пользовательские зоны.
 bool loadZoneByName(const char* name, char* err, size_t errCap) {
     if (!valid_zone_name(name)) {
         _snprintf_s(err, errCap, _TRUNCATE,
@@ -150,14 +140,13 @@ bool loadZoneByName(const char* name, char* err, size_t errCap) {
     XZoneInfo zones[2]{};
     unsigned count = 0;
     if (hasLoadedZone) {
-        // Engine frees *every* zone carrying this flag, not just our previous name.
         zones[count++] = XZoneInfo{nullptr, 0, kZoneFlag};
         say("LoadZone: replacing previous zone (free flag 0x40)...\n");
     }
     zones[count++] = XZoneInfo{activeName, kZoneFlag, 0};
     say("LoadZone: loading...\n");
-    load(zones, count, 1); // Unload first, then synchronously load the new zone.
-    hasLoadedZone = true;  // Return alone is not proof the assets were loaded correctly.
+    load(zones, count, 1);
+    hasLoadedZone = true;
     loading.store(false, std::memory_order_release);
     say("LoadZone: load call returned.\n");
     return true;
@@ -175,10 +164,9 @@ bool unloadLoadedZone(char* err, size_t errCap) {
     }
     loading.store(true, std::memory_order_release);
     XZoneInfo zones[1]{};
-    // Engine frees *every* zone carrying this flag, not just activeName.
     zones[0] = XZoneInfo{nullptr, 0, kZoneFlag};
     say("UnloadZone: unloading...\n");
-    load(zones, 1, 1); // freeFlags=0x40, synchronous.
+    load(zones, 1, 1);
     hasLoadedZone = false;
     activeName[0] = '\0';
     activePath[0] = '\0';
@@ -187,7 +175,6 @@ bool unloadLoadedZone(char* err, size_t errCap) {
     return true;
 }
 
-// --- Консольные обёртки и хуки ---
 namespace {
 void __cdecl loadZone() {
     if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
@@ -215,7 +202,7 @@ void __cdecl initHook() {
         addCommand("loadzone", loadZone);
         addCommand("unloadzone", unloadZone);
         registered = true;
-        initZoneMenu(g_self); // ImGui-меню: F6 по умолчанию, клавиша из loadzone.ini
+        initZoneMenu(g_self);
     }
     originalInit();
 }
@@ -227,25 +214,15 @@ void initialize(HMODULE self) {
         OutputDebugStringA("LoadZone: missing/unreadable cod4x_021.dll.\n");
         return;
     }
-
     const BuildOffsets* build = nullptr;
     for (const auto& candidate : kBuilds) {
-        if (candidate.crc == crc) {
-            build = &candidate;
-            break;
-        }
+        if (candidate.crc == crc) { build = &candidate; break; }
     }
     if (!build) {
         OutputDebugStringA("LoadZone: unsupported cod4x_021.dll CRC32; supported builds are 21.1 and 21.8.\n");
         return;
     }
-
     auto base = reinterpret_cast<uintptr_t>(cod4x);
-    // Neutralize the startup IWD validation (FS_ValidateIwdFiles): it compares
-    // every loaded .iwd against a hardcoded list of stock checksums and shows an
-    // "Invalid IWD files detected!" error for any custom archive found in main/.
-    // A single RET at the function entry disables the whole check; the function
-    // runs long after DLL load, so patching it here is safe.
     if (patchByte(base + build->validateIwdRva, 0xc3)) {
         OutputDebugStringA("LoadZone: startup IWD validation disabled.\n");
     } else {
@@ -258,7 +235,6 @@ void initialize(HMODULE self) {
     _snprintf_s(message, sizeof(message), _TRUNCATE,
                 "LoadZone: CoD4x %s detected (CRC32 %08X).\n", build->version, crc);
     OutputDebugStringA(message);
-    // ASI loaders may otherwise unload modules after initialization.
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                             reinterpret_cast<LPCSTR>(self), &pinned)) return;
