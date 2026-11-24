@@ -40,6 +40,10 @@ WNDPROC g_origWndProc = nullptr;
 HWND    g_gameHwnd = nullptr;
 std::atomic<bool> g_loading{false};
 
+// Предварительные объявления (нужны, т.к. tryInitImGui ссылается на menuWndProc).
+LRESULT CALLBACK menuWndProc(HWND, UINT, WPARAM, LPARAM);
+void tryInitImGui(IDirect3DDevice9* dev);
+
 void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowPadding     = ImVec2(10, 8);
@@ -212,7 +216,7 @@ HRESULT STDMETHODCALLTYPE hookReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS
     return hr;
 }
 
-// Инициализация откладывается до первого EndScene: окно и девайс уже готовы.
+// Определение — после всех, кто его использует по объявлению.
 void tryInitImGui(IDirect3DDevice9* dev) {
     if (g_imguiReady) return;
     g_device = dev;
@@ -254,7 +258,6 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
 
-// Получить vtable EndScene/Reset через временный D3D9-девайс (если окно уже есть).
 bool installHooks() {
     HWND hwnd = FindWindowA(nullptr, kGameWindowTitle);
     if (!hwnd) { OutputDebugStringA("LoadZone: no window for hook install.\n"); return false; }
@@ -292,7 +295,6 @@ bool installHooks() {
 void initZoneMenu(void* moduleHandle) {
     g_self = (HMODULE)moduleHandle;
     loadConfig();
-    // Хуки ставим сразу — иначе не получим первый EndScene.
     if (!installHooks()) {
         OutputDebugStringA("LoadZone: installHooks failed; menu will not initialize.\n");
     }
