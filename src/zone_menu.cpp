@@ -21,6 +21,7 @@ Settings g_cfg{ VK_F6 };
 bool     g_registered = false;
 bool     g_visible    = false;
 bool     g_waitingKey = false;
+bool     g_cursorShown = false;
 HMODULE  g_self       = nullptr;
 char     g_dir[MAX_PATH] = {};
 
@@ -40,7 +41,6 @@ WNDPROC g_origWndProc = nullptr;
 HWND    g_gameHwnd = nullptr;
 std::atomic<bool> g_loading{false};
 
-// Предварительные объявления (нужны, т.к. tryInitImGui ссылается на menuWndProc).
 LRESULT CALLBACK menuWndProc(HWND, UINT, WPARAM, LPARAM);
 void tryInitImGui(IDirect3DDevice9* dev);
 
@@ -138,9 +138,27 @@ void applyHotkey(HWND hwnd) {
     saveConfig();
 }
 
+// --- Управление курсором/захватом мыши ---
+void setCursorVisible(bool visible) {
+    if (visible == g_cursorShown) return;
+    if (visible) {
+        // Снимаем захват мыши игрой и показываем системный курсор.
+        ClipCursor(nullptr);
+        while (ShowCursor(TRUE) < 0) {}
+        g_cursorShown = true;
+    } else {
+        // Возвращаем как было: курсор скрыт, захват восстановит игра сама.
+        while (ShowCursor(FALSE) >= 0) {}
+        g_cursorShown = false;
+    }
+}
+
 void drawMenu() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.MouseDrawCursor = true; // рисуем курсор средствами ImGui
     ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowFocus(); // фокус на панели, без SetForegroundWindow
     ImGui::Begin("LOAD ZONE  -  usermaps", nullptr,
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
@@ -165,6 +183,7 @@ void drawMenu() {
                         OutputDebugStringA(err);
                     } else {
                         g_visible = false;
+                        setCursorVisible(false);
                     }
                 }
             }
@@ -186,6 +205,8 @@ void drawMenu() {
 
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
+    ImGuiIO& io = ImGui::GetIO();
+    io.MouseDrawCursor = g_visible; // курсор только когда меню открыто
     ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -216,7 +237,6 @@ HRESULT STDMETHODCALLTYPE hookReset(IDirect3DDevice9* dev, D3DPRESENT_PARAMETERS
     return hr;
 }
 
-// Определение — после всех, кто его использует по объявлению.
 void tryInitImGui(IDirect3DDevice9* dev) {
     if (g_imguiReady) return;
     g_device = dev;
@@ -250,10 +270,18 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_visible = !g_visible;
         if (g_visible) {
             refreshList();
-            SetForegroundWindow(hwnd);
+            setCursorVisible(true);
+            // Без SetForegroundWindow: фокус ставит ImGui (SetNextWindowFocus),
+            // игра не сворачивается.
             SetFocus(hwnd);
+        } else {
+            setCursorVisible(false);
         }
         return 0;
+    }
+    if (msg == WM_ACTIVATEAPP && wp == FALSE) {
+        // Игра потеряла активацию — прячем меню, чтобы не висело поверх.
+        if (g_visible) { g_visible = false; setCursorVisible(false); }
     }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
@@ -301,6 +329,7 @@ void initZoneMenu(void* moduleHandle) {
 }
 
 void shutdownZoneMenu() {
+    setCursorVisible(false);
     if (g_gameHwnd) {
         if (g_registered) { UnregisterHotKey(g_gameHwnd, 1); g_registered = false; }
         if (g_origWndProc) { SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)g_origWndProc); g_origWndProc = nullptr; }
