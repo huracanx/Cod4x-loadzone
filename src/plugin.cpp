@@ -53,6 +53,10 @@ char activeName[65] = {};
 char activePath[MAX_PATH] = {};
 std::atomic<bool> loading{false};
 
+// --- Для меню (см. common.hpp) ---
+HMODULE g_self = nullptr;
+const char** g_langPtr = reinterpret_cast<const char**>(0xCC147D4);
+
 // Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
 __declspec(naked) Dvar* findDvar(const char*) {
     __asm {
@@ -68,28 +72,46 @@ __declspec(naked) Dvar* findDvar(const char*) {
     }
 }
 void say(const char* text) { print(0, text, 0); }
-void __cdecl loadZone() {
-    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
-        say("Usage: loadzone <name_without_ff>\n"); return;
-    }
-    const char* name = args->argv[args->nesting][1];
+
+// Общий загрузчик: используется консолью (loadZone) и меню (zone_menu.cpp).
+bool loadZoneByName(const char* name, char* err, size_t errCap) {
     if (!valid_zone_name(name)) {
-        say("LoadZone: use 1-64 letters, digits, _ or -; no path or .ff\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE,
+            "LoadZone: use 1-64 letters, digits, _ or -; no path or .ff\n");
+        return false;
     }
     if (loading.load(std::memory_order_acquire)) {
-        say("LoadZone: another zone is loading\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE, "LoadZone: another zone is loading\n");
+        return false;
     }
     Dvar* home = findDvar("fs_homepath");
-    const char* lang = *reinterpret_cast<const char**>(0xCC147D4);
+    const char* lang = (g_langPtr ? *g_langPtr : nullptr);
     if (!home || !home->current.string || !lang || !*lang) {
-        say("LoadZone: fs_homepath or game language is unavailable\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE,
+            "LoadZone: fs_homepath or game language is unavailable\n");
+        return false;
     }
-    int n = _snprintf_s(activePath, sizeof(activePath), _TRUNCATE, "%s\\zone\\%s\\%s.ff", home->current.string, lang, name);
-    if (n < 0) { say("LoadZone: path too long\n"); return; }
+    int n = _snprintf_s(activePath, sizeof(activePath), _TRUNCATE,
+                        "%s\\zone\\%s\\%s.ff", home->current.string, lang, name);
+    if (n < 0) {
+        _snprintf_s(err, errCap, _TRUNCATE, "LoadZone: path too long\n");
+        return false;
+    }
     DWORD attrs = GetFileAttributesA(activePath);
     if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-        say("LoadZone: .ff not found in fs_homepath/zone/<language>/\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE,
+            "LoadZone: .ff not found in fs_homepath/zone/<language>/\n");
+        return false;
     }
+    HANDLE h = CreateFileA(activePath, GENERIC_READ, FILE_SHARE_READ, nullptr,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) {
+        _snprintf_s(err, errCap, _TRUNCATE,
+            "LoadZone: cannot open .ff for reading (err %lu)\n", GetLastError());
+        return false;
+    }
+    CloseHandle(h);
+
     strcpy_s(activeName, name);
     loading.store(true, std::memory_order_release);
     XZoneInfo zones[2]{};
@@ -105,16 +127,18 @@ void __cdecl loadZone() {
     hasLoadedZone = true;  // Return alone is not proof the assets were loaded correctly.
     loading.store(false, std::memory_order_release);
     say("LoadZone: load call returned.\n");
+    return true;
 }
-void __cdecl unloadZone() {
-    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] > 1) {
-        say("Usage: unloadzone\n"); return;
-    }
+
+bool unloadLoadedZone(char* err, size_t errCap) {
     if (!hasLoadedZone) {
-        say("UnloadZone: no zone loaded by this command\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE,
+            "UnloadZone: no zone loaded by this command\n");
+        return false;
     }
     if (loading.load(std::memory_order_acquire)) {
-        say("UnloadZone: another zone is loading\n"); return;
+        _snprintf_s(err, errCap, _TRUNCATE, "UnloadZone: another zone is loading\n");
+        return false;
     }
     loading.store(true, std::memory_order_release);
     XZoneInfo zones[1]{};
@@ -127,6 +151,22 @@ void __cdecl unloadZone() {
     activePath[0] = '\0';
     loading.store(false, std::memory_order_release);
     say("UnloadZone: unload call returned.\n");
+    return true;
+}
+
+void __cdecl loadZone() {
+    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
+        say("Usage: loadzone <name_without_ff>\n"); return;
+    }
+    char err[192];
+    if (!loadZoneByName(args->argv[args->nesting][1], err, sizeof(err))) say(err);
+}
+void __cdecl unloadZone() {
+    if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] > 1) {
+        say("Usage: unloadzone\n"); return;
+    }
+    char err[192];
+    if (!unloadLoadedZone(err, sizeof(err))) say(err);
 }
 void __cdecl buildPath(const char* filename, int ffDir, int pathlen, char* path) {
     if (filename && path && pathlen > 0 && loading.load(std::memory_order_acquire) && _stricmp(filename, activeName) == 0) {
@@ -140,6 +180,7 @@ void __cdecl initHook() {
         addCommand("loadzone", loadZone);
         addCommand("unloadzone", unloadZone);
         registered = true;
+        initZoneMenu(g_self); // <-- меню (F6 по умолчанию, клавиша из loadzone.ini)
     }
     originalInit();
 }
@@ -209,6 +250,7 @@ void initialize(HMODULE self) {
     HMODULE pinned = nullptr;
     if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
                             reinterpret_cast<LPCSTR>(self), &pinned)) return;
+    g_self = self; // <-- для меню
     LONG status = DetourTransactionBegin();
     if (status != NO_ERROR) return;
     status = DetourUpdateThread(GetCurrentThread());
@@ -222,6 +264,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
         initialize(instance);
+    } else if (reason == DLL_PROCESS_DETACH) {
+        shutdownZoneMenu();
     }
     return TRUE;
 }

@@ -22,3 +22,22 @@ inline bool valid_zone_name(const char* s) {
     }
     return true;
 }
+
+// --- Общие объявления для plugin.cpp и zone_menu.cpp ---
+struct Dvar;
+
+// findDvar определён в plugin.cpp (naked-функция); здесь только объявление.
+Dvar* findDvar(const char* name);
+
+// Указатель на строку языка игры (0xCC147D4); определён в plugin.cpp.
+extern const char** g_langPtr;
+
+// Общий загрузчик/выгрузчик зон (реализация в plugin.cpp).
+// Возвращает true при успешном вызове движкового load(); при ошибке пишет
+// текст в err (errCap — размер буфера) и НЕ запускает выгрузку.
+bool loadZoneByName(const char* nameWithoutExt, char* err, size_t errCap);
+bool unloadLoadedZone(char* err, size_t errCap);
+
+// Жизненный цикл меню (реализация в zone_menu.cpp).
+void initZoneMenu(void* moduleHandle);
+void shutdownZoneMenu();
