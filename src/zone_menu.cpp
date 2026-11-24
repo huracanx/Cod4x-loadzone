@@ -44,6 +44,23 @@ std::atomic<bool> g_loading{false};
 LRESULT CALLBACK menuWndProc(HWND, UINT, WPARAM, LPARAM);
 void tryInitImGui(IDirect3DDevice9* dev);
 
+// Стоковые зоны CoD4 MP. В модах список может отличаться — расширяйте при необходимости.
+bool is_stock_zone(const char* nameNoExt) {
+    static const char* kStock[] = {
+        "iw3mp", "common_mp", "code_post_gfx", "code_post_gfx_mp", "ui_mp",
+        "killhouse_mp", "mp_backlot", "mp_bloc", "mp_bog", "mp_cargoship",
+        "mp_citystreets", "mp_convoy", "mp_countdown", "mp_crash",
+        "mp_crossfire", "mp_farm", "mp_overgrown", "mp_pipeline", "mp_shipment",
+        "mp_showdown", "mp_strike", "mp_vacant",
+    };
+    for (const char* s : kStock) {
+        if (_stricmp(nameNoExt, s) == 0) return true;
+    }
+    // Любые mp_* без явного пользовательского маркера тоже считаем стоковыми.
+    if (_strnicmp(nameNoExt, "mp_", 3) == 0) return true;
+    return false;
+}
+
 void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
     s.WindowPadding     = ImVec2(10, 8);
@@ -99,13 +116,13 @@ void saveConfig() {
     WritePrivateProfileStringW(L"menu", L"toggle_key", val, path);
 }
 
+// Стандартный путь .ff: fs_homepath\zone\<lang>\ (без usermaps).
 bool resolveUserDir() {
     Dvar* home = findDvar("fs_homepath");
     const char* lang = (g_langPtr ? *g_langPtr : nullptr);
     if (!home || !home->current.string || !lang || !*lang) return false;
     _snprintf_s(g_dir, sizeof(g_dir), _TRUNCATE,
-                "%s\\zone\\%s\\usermaps", home->current.string, lang);
-    CreateDirectoryA(g_dir, nullptr);
+                "%s\\zone\\%s", home->current.string, lang);
     return true;
 }
 void refreshList() {
@@ -122,8 +139,10 @@ void refreshList() {
         if (!dot || _stricmp(dot, ".ff") != 0) continue;
         size_t len = (size_t)(dot - fd.cFileName);
         if (len == 0 || len >= sizeof(g_entries[0].name)) continue;
-        memcpy(g_entries[g_count].name, fd.cFileName, len);
-        g_entries[g_count].name[len] = 0;
+        char name[64];
+        memcpy(name, fd.cFileName, len); name[len] = 0;
+        if (is_stock_zone(name)) continue; // скрываем стандартные зоны игры
+        memcpy(g_entries[g_count].name, name, len + 1);
         if (++g_count >= (int)_countof(g_entries)) break;
     } while (FindNextFileA(h, &fd));
     FindClose(h);
@@ -138,36 +157,32 @@ void applyHotkey(HWND hwnd) {
     saveConfig();
 }
 
-// --- Управление курсором/захватом мыши ---
 void setCursorVisible(bool visible) {
     if (visible == g_cursorShown) return;
     if (visible) {
-        // Снимаем захват мыши игрой и показываем системный курсор.
         ClipCursor(nullptr);
+        ReleaseCapture();
         while (ShowCursor(TRUE) < 0) {}
         g_cursorShown = true;
     } else {
-        // Возвращаем как было: курсор скрыт, захват восстановит игра сама.
         while (ShowCursor(FALSE) >= 0) {}
         g_cursorShown = false;
     }
 }
 
 void drawMenu() {
-    ImGuiIO& io = ImGui::GetIO();
-    io.MouseDrawCursor = true; // рисуем курсор средствами ImGui
     ImGui::SetNextWindowSize(ImVec2(420, 360), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowFocus(); // фокус на панели, без SetForegroundWindow
-    ImGui::Begin("LOAD ZONE  -  usermaps", nullptr,
+    ImGui::SetNextWindowFocus();
+    ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
-    ImGui::TextUnformatted("user .ff only");
+    ImGui::TextUnformatted("custom .ff files");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_count == 0) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
-        ImGui::TextWrapped("No user .ff files in:\n%s",
+        ImGui::TextWrapped("No custom .ff files in:\n%s",
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
     } else {
@@ -206,9 +221,33 @@ void drawMenu() {
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
     ImGuiIO& io = ImGui::GetIO();
-    io.MouseDrawCursor = g_visible; // курсор только когда меню открыто
+
+    if (g_visible) {
+        // Игра может вернуть захват каждый кадр — снимаем постоянно.
+        ClipCursor(nullptr);
+        // Принудительно обновляем позицию мыши из системного курсора:
+        // при raw input WM_MOUSEMOVE в игру не доходит, ImGui не получает координат.
+        POINT p{};
+        if (GetCursorPos(&p) && ScreenToClient(g_gameHwnd, &p)) {
+            io.MousePos = ImVec2((float)p.x, (float)p.y);
+        }
+        // Состояние кнопок — из GetAsyncKeyState (raw input может скрывать клики).
+        io.MouseDown[0] = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+        io.MouseDown[1] = (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+    } else {
+        io.MouseDrawCursor = false;
+    }
+    io.MouseDrawCursor = g_visible;
+
     ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    // После Win32_NewFrame перезаписываем MousePos, если меню открыто.
+    if (g_visible) {
+        POINT p{};
+        if (GetCursorPos(&p) && ScreenToClient(g_gameHwnd, &p)) {
+            io.MousePos = ImVec2((float)p.x, (float)p.y);
+        }
+    }
     ImGui::NewFrame();
     if (g_visible) drawMenu();
     if (g_waitingKey) {
@@ -251,6 +290,8 @@ void tryInitImGui(IDirect3DDevice9* dev) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     applyStyle();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange; // не трогаем системный курсор
     ImGui_ImplWin32_Init(g_gameHwnd);
     ImGui_ImplDX9_Init(dev);
     g_imguiReady = true;
@@ -265,14 +306,16 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
 }
 
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // Пока меню открыто — не пропускаем raw input в игру (иначе прицел/камера дёргаются).
+    if (g_visible && msg == WM_INPUT) return 0;
+
     if (g_imguiReady && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
+
     if (msg == WM_HOTKEY && wp == 1) {
         g_visible = !g_visible;
         if (g_visible) {
             refreshList();
             setCursorVisible(true);
-            // Без SetForegroundWindow: фокус ставит ImGui (SetNextWindowFocus),
-            // игра не сворачивается.
             SetFocus(hwnd);
         } else {
             setCursorVisible(false);
@@ -280,7 +323,6 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     if (msg == WM_ACTIVATEAPP && wp == FALSE) {
-        // Игра потеряла активацию — прячем меню, чтобы не висело поверх.
         if (g_visible) { g_visible = false; setCursorVisible(false); }
     }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
