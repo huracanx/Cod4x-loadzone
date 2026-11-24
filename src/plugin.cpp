@@ -115,7 +115,8 @@ bool loadZoneByName(const char* name, char* err, size_t errCap) {
         return false;
     }
     int n = _snprintf_s(activePath, sizeof(activePath), _TRUNCATE,
-                        "%s\\zone\\%s\\%s.ff", home->current.string, lang, name);
+                    "%s\\zone\\%s\\usermaps\\%s.ff",
+                    home->current.string, lang, name);
     if (n < 0) {
         _snprintf_s(err, errCap, _TRUNCATE, "LoadZone: path too long\n");
         return false;
