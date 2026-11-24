@@ -23,8 +23,25 @@ inline bool valid_zone_name(const char* s) {
     return true;
 }
 
-// --- Общие объявления для plugin.cpp и zone_menu.cpp ---
-struct Dvar;
+// --- Общие типы движка (нужны и plugin.cpp, и zone_menu.cpp) ---
+union DvarValue {
+    bool enabled;
+    int integer;
+    float value;
+    float vector[4];
+    const char* string;
+};
+struct Dvar {
+    const char* name;
+    const char* description;
+    uint16_t flags;
+    int8_t type;
+    bool modified;
+    DvarValue current;
+};
+static_assert(offsetof(Dvar, current) == 12, "Unexpected dvar layout");
+
+struct XZoneInfo { const char* name; int allocFlags; int freeFlags; };
 
 // findDvar определён в plugin.cpp (naked-функция); здесь только объявление.
 Dvar* findDvar(const char* name);
@@ -33,8 +50,6 @@ Dvar* findDvar(const char* name);
 extern const char** g_langPtr;
 
 // Общий загрузчик/выгрузчик зон (реализация в plugin.cpp).
-// Возвращает true при успешном вызове движкового load(); при ошибке пишет
-// текст в err (errCap — размер буфера) и НЕ запускает выгрузку.
 bool loadZoneByName(const char* nameWithoutExt, char* err, size_t errCap);
 bool unloadLoadedZone(char* err, size_t errCap);
 

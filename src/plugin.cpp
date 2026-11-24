@@ -1,5 +1,4 @@
 // Adapted from Rex109/CoD4QOL. See README and LICENSE.md.
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdint>
 #include <cstdio>
@@ -31,10 +30,6 @@ constexpr BuildOffsets kBuilds[] = {
 };
 
 struct CmdArgs { int nesting; int localClientNum[8]; int controllerIndex[8]; int argc[8]; const char** argv[8]; };
-union DvarValue { bool enabled; int integer; float value; float vector[4]; const char* string; };
-struct Dvar { const char* name; const char* description; uint16_t flags; int8_t type; bool modified; DvarValue current; };
-struct XZoneInfo { const char* name; int allocFlags; int freeFlags; };
-static_assert(offsetof(Dvar, current) == 12, "Unexpected dvar layout");
 using InitFn = void (__cdecl*)();
 using BuildPathFn = void (__cdecl*)(const char*, int, int, char*);
 using AddCommandFn = void* (__cdecl*)(const char*, void (__cdecl*)());
@@ -55,7 +50,6 @@ std::atomic<bool> loading{false};
 
 // --- Для меню (см. common.hpp) ---
 HMODULE g_self = nullptr;
-const char** g_langPtr = reinterpret_cast<const char**>(0xCC147D4);
 
 // Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
 __declspec(naked) Dvar* findDvar(const char*) {

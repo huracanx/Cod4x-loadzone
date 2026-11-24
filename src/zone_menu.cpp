@@ -1,5 +1,4 @@
 // Adapted from Rex109/CoD4QOL. See README and LICENSE.md.
-#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -10,6 +9,9 @@ constexpr UINT kIdHotkey  = 0x5A01;
 constexpr int  kIdList    = 1001;
 constexpr int  kIdKeyBtn  = 1002;
 constexpr wchar_t kIniName[] = L"loadzone.ini";
+
+template <typename T, size_t N>
+constexpr size_t countof(const T (&)[N]) { return N; }
 
 struct Settings { UINT toggleKey; };
 Settings g_cfg{ VK_F6 };
@@ -41,12 +43,12 @@ void iniPath(wchar_t* out, size_t cap) {
     wcscat_s(out, cap, kIniName);
 }
 void loadConfig() {
-    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
+    wchar_t path[MAX_PATH]; iniPath(path, countof(path));
     g_cfg.toggleKey = (UINT)GetPrivateProfileIntW(L"menu", L"toggle_key", VK_F6, path);
     if (g_cfg.toggleKey == 0 || g_cfg.toggleKey > 0xFE) g_cfg.toggleKey = VK_F6;
 }
 void saveConfig() {
-    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
+    wchar_t path[MAX_PATH]; iniPath(path, countof(path));
     wchar_t val[16]; swprintf_s(val, L"%u", g_cfg.toggleKey);
     WritePrivateProfileStringW(L"menu", L"toggle_key", val, path);
 }
@@ -79,7 +81,7 @@ void refreshList() {
         g_entries[g_count].name[len] = 0;
         if (g_list) SendMessageA(g_list, LB_ADDSTRING, 0,
                                  (LPARAM)g_entries[g_count].name);
-        if (++g_count >= (int)_countof(g_entries)) break;
+        if (++g_count >= (int)countof(g_entries)) break;
     } while (FindNextFileA(h, &fd));
     FindClose(h);
     InvalidateRect(g_hwnd, nullptr, TRUE);
