@@ -48,10 +48,37 @@ char activeName[65] = {};
 char activePath[MAX_PATH] = {};
 std::atomic<bool> loading{false};
 
-// --- Для меню (см. common.hpp) ---
-HMODULE g_self = nullptr;
+HMODULE g_self = nullptr; // <-- для меню; внутри namespace, но initZoneMenu получает его как параметр
 
-// Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
+void say(const char* text) { print(0, text, 0); }
+
+// Applies a single-byte patch inside the cod4x client module.
+bool patchByte(uintptr_t address, unsigned char value) {
+    DWORD oldProtect = 0;
+    if (!VirtualProtect(reinterpret_cast<LPVOID>(address), 1, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
+    *reinterpret_cast<unsigned char*>(address) = value;
+    DWORD ignored = 0;
+    VirtualProtect(reinterpret_cast<LPVOID>(address), 1, oldProtect, &ignored);
+    return true;
+}
+bool moduleCRC(HMODULE mod, uint32_t& out) {
+    char path[MAX_PATH];
+    if (!GetModuleFileNameA(mod, path, MAX_PATH)) return false;
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "rb") || !f) return false;
+    unsigned char buffer[8192];
+    uint32_t c = 0xffffffffu;
+    size_t n;
+    while ((n = fread(buffer, 1, sizeof(buffer), f)) != 0) c = crc32_update(c, buffer, n);
+    bool ok = ferror(f) == 0;
+    fclose(f);
+    out = c ^ 0xffffffffu;
+    return ok;
+}
+} // namespace
+
+// --- Глобальные определения, объявленные в common.hpp ---
+// findDvar: Original IW3 dvar lookup convention uses EDI, not the usual cdecl argument.
 __declspec(naked) Dvar* findDvar(const char*) {
     __asm {
         push eax
@@ -65,7 +92,9 @@ __declspec(naked) Dvar* findDvar(const char*) {
         ret
     }
 }
-void say(const char* text) { print(0, text, 0); }
+
+// Указатель на строку языка игры (0xCC147D4).
+const char** g_langPtr = reinterpret_cast<const char**>(0xCC147D4);
 
 // Общий загрузчик: используется консолью (loadZone) и меню (zone_menu.cpp).
 bool loadZoneByName(const char* name, char* err, size_t errCap) {
@@ -148,6 +177,8 @@ bool unloadLoadedZone(char* err, size_t errCap) {
     return true;
 }
 
+// --- Внутренние обёртки и хуки ---
+namespace {
 void __cdecl loadZone() {
     if (args->nesting < 0 || args->nesting >= 8 || args->argc[args->nesting] != 2) {
         say("Usage: loadzone <name_without_ff>\n"); return;
@@ -177,29 +208,6 @@ void __cdecl initHook() {
         initZoneMenu(g_self); // <-- меню (F6 по умолчанию, клавиша из loadzone.ini)
     }
     originalInit();
-}
-// Applies a single-byte patch inside the cod4x client module.
-bool patchByte(uintptr_t address, unsigned char value) {
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(reinterpret_cast<LPVOID>(address), 1, PAGE_EXECUTE_READWRITE, &oldProtect)) return false;
-    *reinterpret_cast<unsigned char*>(address) = value;
-    DWORD ignored = 0;
-    VirtualProtect(reinterpret_cast<LPVOID>(address), 1, oldProtect, &ignored);
-    return true;
-}
-bool moduleCRC(HMODULE mod, uint32_t& out) {
-    char path[MAX_PATH];
-    if (!GetModuleFileNameA(mod, path, MAX_PATH)) return false;
-    FILE* f = nullptr;
-    if (fopen_s(&f, path, "rb") || !f) return false;
-    unsigned char buffer[8192];
-    uint32_t c = 0xffffffffu;
-    size_t n;
-    while ((n = fread(buffer, 1, sizeof(buffer), f)) != 0) c = crc32_update(c, buffer, n);
-    bool ok = ferror(f) == 0;
-    fclose(f);
-    out = c ^ 0xffffffffu;
-    return ok;
 }
 void initialize(HMODULE self) {
     if (reinterpret_cast<uintptr_t>(GetModuleHandleA("iw3mp.exe")) != 0x400000) return;
@@ -253,7 +261,8 @@ void initialize(HMODULE self) {
     if (status != NO_ERROR) { DetourTransactionAbort(); OutputDebugStringA("LoadZone: hook setup failed.\n"); return; }
     if (DetourTransactionCommit() != NO_ERROR) OutputDebugStringA("LoadZone: hook commit failed.\n");
 }
-}
+} // namespace
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(instance);
