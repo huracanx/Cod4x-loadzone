@@ -1,6 +1,10 @@
 @echo off
 setlocal
-where cl >nul 2>&1 || (echo Run from an x86 Native Tools Command Prompt for VS 2022 & exit /b 1)
 if not exist build mkdir build
-cl /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Ithird_party\detours src\plugin.cpp third_party\detours\detours.lib /link /OUT:build\loadzone.asi
+cl /nologo /EHsc /O2 /MT /D WIN32_LEAN_AND_MEAN /I third_party\detours\include ^
+   src\plugin.cpp src\zone_menu.cpp ^
+   /link /DLL /OUT:build\loadzone.asi ^
+   third_party\detours\lib\x86\detours.lib user32.lib gdi32.lib advapi32.lib
 if errorlevel 1 exit /b 1
+echo Built build\loadzone.asi
+endlocal
