@@ -62,39 +62,45 @@ bool is_stock_zone(const char* nameNoExt) {
 
 void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowPadding     = ImVec2(10, 8);
-    s.FramePadding      = ImVec2(8, 4);
-    s.ItemSpacing       = ImVec2(6, 4);
-    s.WindowRounding    = 4.0f;
-    s.FrameRounding     = 3.0f;
-    s.GrabRounding      = 3.0f;
+    s.WindowPadding     = ImVec2(12, 10);
+    s.FramePadding      = ImVec2(9, 5);
+    s.ItemSpacing       = ImVec2(8, 5);
+    s.WindowRounding    = 6.0f;
+    s.FrameRounding     = 4.0f;
+    s.GrabRounding      = 4.0f;
+    s.ScrollbarRounding = 4.0f;
     s.WindowBorderSize  = 1.0f;
     s.FrameBorderSize   = 0.0f;
-    s.WindowTitleAlign  = ImVec2(0.0f, 0.5f);
+    s.WindowTitleAlign  = ImVec2(0.5f, 0.5f);
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]        = ImVec4(0.06f, 0.06f, 0.06f, 0.96f);
-    c[ImGuiCol_ChildBg]         = ImVec4(0.09f, 0.09f, 0.09f, 0.96f);
-    c[ImGuiCol_Border]          = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-    c[ImGuiCol_Text]            = ImVec4(0.85f, 0.85f, 0.85f, 1.00f);
-    c[ImGuiCol_TextDisabled]    = ImVec4(0.46f, 0.46f, 0.46f, 1.00f);
-    c[ImGuiCol_Header]          = ImVec4(0.13f, 0.17f, 0.23f, 1.00f);
-    c[ImGuiCol_HeaderHovered]   = ImVec4(0.15f, 0.20f, 0.28f, 1.00f);
-    c[ImGuiCol_HeaderActive]    = ImVec4(0.16f, 0.22f, 0.31f, 1.00f);
-    c[ImGuiCol_Button]          = ImVec4(0.13f, 0.13f, 0.13f, 1.00f);
-    c[ImGuiCol_ButtonHovered]   = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-    c[ImGuiCol_ButtonActive]    = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
-    c[ImGuiCol_FrameBg]         = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
-    c[ImGuiCol_FrameBgActive]   = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.06f, 0.06f, 0.06f, 1.00f);
-    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
-    c[ImGuiCol_Separator]       = ImVec4(0.16f, 0.16f, 0.16f, 1.00f);
-    c[ImGuiCol_CheckMark]       = ImVec4(0.23f, 0.48f, 0.84f, 1.00f);
-    c[ImGuiCol_SliderGrab]      = ImVec4(0.23f, 0.48f, 0.84f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]= ImVec4(0.28f, 0.55f, 0.92f, 1.00f);
-    c[ImGuiCol_TitleBg]         = ImVec4(0.06f, 0.06f, 0.06f, 1.00f);
-    c[ImGuiCol_TitleBgActive]   = ImVec4(0.08f, 0.08f, 0.08f, 1.00f);
-    c[ImGuiCol_NavHighlight]    = ImVec4(0.23f, 0.48f, 0.84f, 1.00f);
+    // Стальной/синий акцент на тёмном фоне
+    c[ImGuiCol_WindowBg]        = ImVec4(0.08f, 0.09f, 0.11f, 0.97f);
+    c[ImGuiCol_ChildBg]         = ImVec4(0.11f, 0.12f, 0.14f, 0.97f);
+    c[ImGuiCol_PopupBg]         = ImVec4(0.08f, 0.09f, 0.11f, 0.98f);
+    c[ImGuiCol_Border]          = ImVec4(0.24f, 0.28f, 0.34f, 1.00f);
+    c[ImGuiCol_Text]            = ImVec4(0.90f, 0.92f, 0.95f, 1.00f);
+    c[ImGuiCol_TextDisabled]    = ImVec4(0.50f, 0.53f, 0.58f, 1.00f);
+    c[ImGuiCol_Header]          = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
+    c[ImGuiCol_HeaderHovered]   = ImVec4(0.22f, 0.30f, 0.42f, 1.00f);
+    c[ImGuiCol_HeaderActive]    = ImVec4(0.26f, 0.36f, 0.50f, 1.00f);
+    c[ImGuiCol_Button]          = ImVec4(0.18f, 0.22f, 0.28f, 1.00f);
+    c[ImGuiCol_ButtonHovered]   = ImVec4(0.24f, 0.30f, 0.40f, 1.00f);
+    c[ImGuiCol_ButtonActive]    = ImVec4(0.30f, 0.40f, 0.54f, 1.00f);
+    c[ImGuiCol_FrameBg]         = ImVec4(0.13f, 0.15f, 0.18f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.17f, 0.20f, 0.25f, 1.00f);
+    c[ImGuiCol_FrameBgActive]   = ImVec4(0.21f, 0.26f, 0.33f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.28f, 0.32f, 0.38f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.36f, 0.42f, 0.50f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.44f, 0.52f, 0.62f, 1.00f);
+    c[ImGuiCol_Separator]       = ImVec4(0.24f, 0.28f, 0.34f, 1.00f);
+    c[ImGuiCol_CheckMark]       = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
+    c[ImGuiCol_SliderGrab]      = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]= ImVec4(0.46f, 0.70f, 1.00f, 1.00f);
+    c[ImGuiCol_TitleBg]         = ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
+    c[ImGuiCol_TitleBgActive]   = ImVec4(0.14f, 0.18f, 0.26f, 1.00f);
+    c[ImGuiCol_TitleBgCollapsed]= ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
+    c[ImGuiCol_NavHighlight]    = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
 }
 
 void iniPath(wchar_t* out, size_t cap) {
@@ -108,11 +114,6 @@ void loadConfig() {
     wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
     g_cfg.toggleKey = (UINT)GetPrivateProfileIntW(L"menu", L"toggle_key", VK_F6, path);
     if (g_cfg.toggleKey == 0 || g_cfg.toggleKey > 0xFE) g_cfg.toggleKey = VK_F6;
-}
-void saveConfig() {
-    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
-    wchar_t val[16]; swprintf_s(val, L"%u", g_cfg.toggleKey);
-    WritePrivateProfileStringW(L"menu", L"toggle_key", val, path);
 }
 
 bool resolveUserDir() {
@@ -152,7 +153,6 @@ void applyHotkey(HWND hwnd) {
     if (g_registered) { UnregisterHotKey(hwnd, 1); g_registered = false; }
     g_registered = RegisterHotKey(hwnd, 1, 0, g_cfg.toggleKey) != 0;
     if (!g_registered) OutputDebugStringA("LoadZone: hotkey registration failed.\n");
-    saveConfig();
 }
 
 void setCursorVisible(bool visible) {
@@ -174,18 +174,37 @@ void requestLoad(int idx) {
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
 }
 
+// Корректное сворачивание игры: прячем меню, отпускаем курсор,
+// затем посылаем игре штатный SC_MINIMIZE — она сама свернётся правильно.
+void minimizeGame() {
+    if (!g_gameHwnd) return;
+    // 1. Скрыть меню и вернуть курсор игре
+    g_visible = false;
+    setCursorVisible(false);
+    // 2. Дать игре обработать фокус/захват
+    SetForegroundWindow(g_gameHwnd);
+    SetFocus(g_gameHwnd);
+    // 3. Штатное сворачивание через оконную процедуру игры
+    PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+    // 4. Резервный путь — если игра проигнорирует (полноэкранный D3D9)
+    ShowWindow(g_gameHwnd, SW_MINIMIZE);
+    // 5. Отдать фокус рабочему столу, чтобы панель задач была активна
+    HWND desktop = GetDesktopWindow();
+    if (desktop) SetForegroundWindow(desktop);
+}
+
 void drawMenu() {
-    ImGui::SetNextWindowSize(ImVec2(420, 380), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(480, 400), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(200, 180), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowFocus();
     ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.66f, 0.74f, 1.0f));
     ImGui::TextUnformatted("custom .ff files");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_count == 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
         ImGui::TextWrapped("No custom .ff files in:\n%s",
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
@@ -204,15 +223,13 @@ void drawMenu() {
     ImGui::Separator();
     bool canLoad = (g_sel >= 0 && g_sel < g_count);
     if (!canLoad) ImGui::BeginDisabled();
-    if (ImGui::Button("Load", ImVec2(90, 0))) requestLoad(g_sel);
+    if (ImGui::Button("Load", ImVec2(100, 0))) requestLoad(g_sel);
     if (!canLoad) ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Minimize game", ImVec2(130, 0))) {
-        if (g_gameHwnd) ShowWindow(g_gameHwnd, SW_MINIMIZE);
-    }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
+    if (ImGui::Button("Minimize game", ImVec2(150, 0))) minimizeGame();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
-        "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close");
+        "Enter/double-click = load   |   hotkey = toggle   |   Esc = close");
     ImGui::PopStyleColor();
     ImGui::End();
 }
@@ -310,7 +327,6 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g_visible) {
             refreshList();
             setCursorVisible(true);
-            // Не форсируем foreground — иначе окно «дёргается» и мешает Alt+Tab.
             if (GetForegroundWindow() == hwnd) SetFocus(hwnd);
         } else {
             setCursorVisible(false);
@@ -320,7 +336,6 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_ACTIVATEAPP && wp == FALSE) {
         if (g_visible) { g_visible = false; setCursorVisible(false); }
     }
-    // Не блокируем SC_MINIMIZE / Alt+Tab и т.п. — просто пробрасываем дальше.
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
 
