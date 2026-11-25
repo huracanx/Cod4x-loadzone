@@ -13,19 +13,12 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
 namespace {
-constexpr wchar_t kIniName[] = L"loadzone.ini";
 constexpr const char* kGameWindowTitle = "Call of Duty 4 X"; // CoD4x
+constexpr UINT kMsgLoadZone = WM_APP + 100; // загрузка в потоке окна (игровом)
+constexpr int  kMenuToggleKey = VK_F6;      // клавиша вызова меню
 
-constexpr UINT kMsgLoadZone = WM_APP + 100;
-constexpr UINT kMsgMinimize = WM_APP + 101;
-constexpr UINT kMsgRestore  = WM_APP + 102;
-
-struct Settings { UINT toggleKey; };
-Settings g_cfg{ VK_F6 };
-bool     g_registered = false;
 bool     g_visible    = false;
 bool     g_cursorShown = false;
-bool     g_minimized   = false;
 HMODULE  g_self       = nullptr;
 char     g_dir[MAX_PATH] = {};
 char     g_status[192] = {};
@@ -46,17 +39,7 @@ WNDPROC g_origWndProc = nullptr;
 HWND    g_gameHwnd = nullptr;
 std::atomic<bool> g_loading{false};
 
-// --- fullscreen/minimize state ---
-D3DPRESENT_PARAMETERS g_origPP{};       // исходные параметры (как создала игра)
-bool  g_haveOrigPP        = false;
-bool  g_wasFullscreen     = false;      // были ли в fullscreen до сворачивания
-bool  g_pendingMinimize   = false;      // нужно перевести в windowed + свернуть
-bool  g_pendingRestore    = false;      // нужно вернуть fullscreen
-HHOOK g_kbHook            = nullptr;
-std::atomic<bool> g_winDown{false};
-
 LRESULT CALLBACK menuWndProc(HWND, UINT, WPARAM, LPARAM);
-LRESULT CALLBACK keyboardHookProc(int, WPARAM, LPARAM);
 void tryInitImGui(IDirect3DDevice9* dev);
 
 bool is_stock_zone(const char* nameNoExt) {
@@ -76,57 +59,40 @@ bool is_stock_zone(const char* nameNoExt) {
 
 void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowPadding     = ImVec2(12, 10);
-    s.FramePadding      = ImVec2(9, 5);
-    s.ItemSpacing       = ImVec2(8, 5);
-    s.WindowRounding    = 6.0f;
-    s.FrameRounding     = 4.0f;
-    s.GrabRounding      = 4.0f;
-    s.ScrollbarRounding = 4.0f;
+    s.WindowPadding     = ImVec2(10, 8);
+    s.FramePadding      = ImVec2(8, 4);
+    s.ItemSpacing       = ImVec2(6, 4);
+    s.WindowRounding    = 4.0f;
+    s.FrameRounding     = 3.0f;
+    s.GrabRounding      = 3.0f;
     s.WindowBorderSize  = 1.0f;
     s.FrameBorderSize   = 0.0f;
-    s.WindowTitleAlign  = ImVec2(0.5f, 0.5f);
+    s.WindowTitleAlign  = ImVec2(0.0f, 0.5f);
     ImVec4* c = s.Colors;
-    c[ImGuiCol_WindowBg]        = ImVec4(0.08f, 0.09f, 0.11f, 0.97f);
-    c[ImGuiCol_ChildBg]         = ImVec4(0.11f, 0.12f, 0.14f, 0.97f);
-    c[ImGuiCol_PopupBg]         = ImVec4(0.08f, 0.09f, 0.11f, 0.98f);
-    c[ImGuiCol_Border]          = ImVec4(0.24f, 0.28f, 0.34f, 1.00f);
-    c[ImGuiCol_Text]            = ImVec4(0.90f, 0.92f, 0.95f, 1.00f);
-    c[ImGuiCol_TextDisabled]    = ImVec4(0.50f, 0.53f, 0.58f, 1.00f);
-    c[ImGuiCol_Header]          = ImVec4(0.18f, 0.24f, 0.34f, 1.00f);
-    c[ImGuiCol_HeaderHovered]   = ImVec4(0.22f, 0.30f, 0.42f, 1.00f);
-    c[ImGuiCol_HeaderActive]    = ImVec4(0.26f, 0.36f, 0.50f, 1.00f);
-    c[ImGuiCol_Button]          = ImVec4(0.18f, 0.22f, 0.28f, 1.00f);
-    c[ImGuiCol_ButtonHovered]   = ImVec4(0.24f, 0.30f, 0.40f, 1.00f);
-    c[ImGuiCol_ButtonActive]    = ImVec4(0.30f, 0.40f, 0.54f, 1.00f);
-    c[ImGuiCol_FrameBg]         = ImVec4(0.13f, 0.15f, 0.18f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.17f, 0.20f, 0.25f, 1.00f);
-    c[ImGuiCol_FrameBgActive]   = ImVec4(0.21f, 0.26f, 0.33f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
-    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.28f, 0.32f, 0.38f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.36f, 0.42f, 0.50f, 1.00f);
-    c[ImGuiCol_ScrollbarGrabActive]  = ImVec4(0.44f, 0.52f, 0.62f, 1.00f);
-    c[ImGuiCol_Separator]       = ImVec4(0.24f, 0.28f, 0.34f, 1.00f);
-    c[ImGuiCol_CheckMark]       = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
-    c[ImGuiCol_SliderGrab]      = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]= ImVec4(0.46f, 0.70f, 1.00f, 1.00f);
-    c[ImGuiCol_TitleBg]         = ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
-    c[ImGuiCol_TitleBgActive]   = ImVec4(0.14f, 0.18f, 0.26f, 1.00f);
-    c[ImGuiCol_TitleBgCollapsed]= ImVec4(0.08f, 0.09f, 0.11f, 1.00f);
-    c[ImGuiCol_NavHighlight]    = ImVec4(0.38f, 0.62f, 0.92f, 1.00f);
-}
-
-void iniPath(wchar_t* out, size_t cap) {
-    GetModuleFileNameW(g_self, out, (DWORD)cap);
-    wchar_t* slash = wcsrchr(out, L'\\');
-    if (slash) *slash = 0;
-    wcscat_s(out, cap, L"\\");
-    wcscat_s(out, cap, kIniName);
-}
-void loadConfig() {
-    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
-    g_cfg.toggleKey = (UINT)GetPrivateProfileIntW(L"menu", L"toggle_key", VK_F6, path);
-    if (g_cfg.toggleKey == 0 || g_cfg.toggleKey > 0xFE) g_cfg.toggleKey = VK_F6;
+    // Голубая тема
+    c[ImGuiCol_WindowBg]        = ImVec4(0.07f, 0.12f, 0.17f, 0.96f);
+    c[ImGuiCol_ChildBg]         = ImVec4(0.09f, 0.15f, 0.21f, 0.96f);
+    c[ImGuiCol_Border]          = ImVec4(0.25f, 0.50f, 0.70f, 1.00f);
+    c[ImGuiCol_Text]            = ImVec4(0.88f, 0.95f, 1.00f, 1.00f);
+    c[ImGuiCol_TextDisabled]    = ImVec4(0.50f, 0.65f, 0.75f, 1.00f);
+    c[ImGuiCol_Header]          = ImVec4(0.20f, 0.45f, 0.65f, 1.00f);
+    c[ImGuiCol_HeaderHovered]   = ImVec4(0.28f, 0.56f, 0.78f, 1.00f);
+    c[ImGuiCol_HeaderActive]    = ImVec4(0.35f, 0.65f, 0.88f, 1.00f);
+    c[ImGuiCol_Button]          = ImVec4(0.18f, 0.40f, 0.58f, 1.00f);
+    c[ImGuiCol_ButtonHovered]   = ImVec4(0.25f, 0.52f, 0.74f, 1.00f);
+    c[ImGuiCol_ButtonActive]    = ImVec4(0.32f, 0.62f, 0.86f, 1.00f);
+    c[ImGuiCol_FrameBg]         = ImVec4(0.10f, 0.18f, 0.25f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.14f, 0.26f, 0.35f, 1.00f);
+    c[ImGuiCol_FrameBgActive]   = ImVec4(0.18f, 0.34f, 0.45f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.07f, 0.12f, 0.17f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.28f, 0.52f, 0.72f, 1.00f);
+    c[ImGuiCol_Separator]       = ImVec4(0.25f, 0.50f, 0.70f, 1.00f);
+    c[ImGuiCol_CheckMark]       = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
+    c[ImGuiCol_SliderGrab]      = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]= ImVec4(0.55f, 0.86f, 1.00f, 1.00f);
+    c[ImGuiCol_TitleBg]         = ImVec4(0.12f, 0.30f, 0.45f, 1.00f);
+    c[ImGuiCol_TitleBgActive]   = ImVec4(0.16f, 0.40f, 0.58f, 1.00f);
+    c[ImGuiCol_NavHighlight]    = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
 }
 
 bool resolveUserDir() {
@@ -161,22 +127,15 @@ void refreshList() {
     if (g_count > 0) g_sel = 0;
 }
 
-void applyHotkey(HWND hwnd) {
-    if (!hwnd) return;
-    if (g_registered) { UnregisterHotKey(hwnd, 1); g_registered = false; }
-    g_registered = RegisterHotKey(hwnd, 1, 0, g_cfg.toggleKey) != 0;
-    if (!g_registered) OutputDebugStringA("LoadZone: hotkey registration failed.\n");
-}
-
 void setCursorVisible(bool visible) {
     if (visible == g_cursorShown) return;
     if (visible) {
         ClipCursor(nullptr);
         ReleaseCapture();
-        SetCursor(LoadCursorA(nullptr, IDC_ARROW));
+        while (ShowCursor(TRUE) < 0) {}
         g_cursorShown = true;
     } else {
-        SetCursor(NULL);
+        while (ShowCursor(FALSE) >= 0) {}
         g_cursorShown = false;
     }
 }
@@ -187,82 +146,42 @@ void requestLoad(int idx) {
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
 }
 
-// --- Полноценное сворачивание эксклюзивного fullscreen D3D9 ---
-// 1. Перевести device в windowed через Reset (только в потоке окна!).
-// 2. ShowWindow(SW_MINIMIZE) — теперь окно обычное и ОС его свернёт.
-// 3. При восстановлении — Reset обратно в fullscreen.
-
-bool applyReset(const D3DPRESENT_PARAMETERS& pp) {
-    if (!g_device) return false;
-    D3DPRESENT_PARAMETERS local = pp; // Reset требует не-const указатель
-    if (g_imguiReady) ImGui_ImplDX9_InvalidateDeviceObjects();
-    HRESULT hr = g_device->Reset(&local);
-    if (g_imguiReady) ImGui_ImplDX9_CreateDeviceObjects();
-    return SUCCEEDED(hr);
-}
-
-void doMinimizeGame() {
-    if (!g_device || !g_gameHwnd) return;
-    if (!g_haveOrigPP) return; // ещё не знаем исходный режим — игра сама справится
-    if (g_minimized) return;
-
-    // Прячем меню и курсор
-    g_visible = false;
-    setCursorVisible(false);
-
-    // Запоминаем, были ли в fullscreen (по исходным параметрам)
-    g_wasFullscreen = (g_origPP.Windowed == FALSE);
-
-    if (g_wasFullscreen) {
-        // Переводим device в windowed, чтобы окно стало обычным и ОС смогла его свернуть
-        D3DPRESENT_PARAMETERS pp = g_origPP;
-        pp.Windowed = TRUE;
-        pp.FullScreen_RefreshRateInHz = 0;
-        pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
-        if (!applyReset(pp)) {
-            OutputDebugStringA("LoadZone: Reset to windowed failed, fallback to SW_MINIMIZE.\n");
-            // Fallback: хотя бы попробуем штатное сворачивание
-            PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
-            return;
+// Открыть/закрыть меню. Возвращает новое состояние видимости.
+void toggleMenu() {
+    if (g_loading.load(std::memory_order_acquire)) return; // во время загрузки не открываем
+    g_visible = !g_visible;
+    setCursorVisible(g_visible);
+    if (g_visible) {
+        int prev = g_sel;
+        refreshList();
+        if (prev >= 0 && prev < g_count) g_sel = prev;
+        if (g_count == 0) {
+            _snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
+                        "no custom .ff files found");
+        } else {
+            g_status[0] = 0;
         }
     }
-
-    // Теперь окно обычное — штатное сворачивание работает
-    g_minimized = true;
-    ShowWindow(g_gameHwnd, SW_MINIMIZE);
-    PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
 }
 
-void doRestoreGame() {
-    if (!g_device || !g_gameHwnd) return;
-    if (!g_minimized) return;
-    if (!g_wasFullscreen) {
-        g_minimized = false;
-        return;
-    }
-    // Возвращаем исходный fullscreen
-    if (applyReset(g_origPP)) {
-        g_minimized = false;
-        g_wasFullscreen = false;
-    } else {
-        OutputDebugStringA("LoadZone: Reset back to fullscreen failed.\n");
-        g_minimized = false;
-        g_wasFullscreen = false;
-    }
+void closeMenu() {
+    if (!g_visible) return;
+    g_visible = false;
+    setCursorVisible(false);
 }
 
 void drawMenu() {
-    ImGui::SetNextWindowSize(ImVec2(480, 400), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(200, 180), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowFocus();
     ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.66f, 0.74f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
     ImGui::TextUnformatted("custom .ff files");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_count == 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
         ImGui::TextWrapped("No custom .ff files in:\n%s",
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
@@ -281,19 +200,21 @@ void drawMenu() {
     ImGui::Separator();
     bool canLoad = (g_sel >= 0 && g_sel < g_count);
     if (!canLoad) ImGui::BeginDisabled();
-    if (ImGui::Button("Load", ImVec2(100, 0))) requestLoad(g_sel);
+    if (ImGui::Button("Load", ImVec2(90, 0))) requestLoad(g_sel);
     if (!canLoad) ImGui::EndDisabled();
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
+    ImGui::SameLine();
+    if (ImGui::Button("Minimize game", ImVec2(130, 0))) {
+        if (g_gameHwnd) ShowWindow(g_gameHwnd, SW_MINIMIZE);
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
-        "Enter/double-click = load   |   hotkey = toggle   |   Esc = close");
+        "Enter/double-click = load   |   F6 = toggle   |   Esc = close");
     ImGui::PopStyleColor();
     ImGui::End();
 }
 
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
-    if (g_minimized || (g_gameHwnd && IsIconic(g_gameHwnd))) return;
-
     ImGuiIO& io = ImGui::GetIO();
     if (g_visible) {
         POINT p{};
@@ -307,12 +228,6 @@ void renderFrame() {
 
     ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
-    if (g_visible) {
-        POINT p{};
-        if (GetCursorPos(&p) && ScreenToClient(g_gameHwnd, &p)) {
-            io.MousePos = ImVec2((float)p.x, (float)p.y);
-        }
-    }
     ImGui::NewFrame();
     if (g_visible) drawMenu();
     ImGui::EndFrame();
@@ -334,23 +249,6 @@ void tryInitImGui(IDirect3DDevice9* dev) {
         g_gameHwnd = FindWindowA(nullptr, kGameWindowTitle);
         if (!g_gameHwnd) { OutputDebugStringA("LoadZone: game window not found.\n"); return; }
     }
-    // Запоминаем исходные D3DPRESENT_PARAMETERS с swapchain'а игры.
-    // Это нужно, чтобы вернуть именно тот fullscreen-режим, который был.
-    if (!g_haveOrigPP) {
-        IDirect3DSwapChain9* sc = nullptr;
-        if (SUCCEEDED(dev->GetSwapChain(0, &sc)) && sc) {
-            if (SUCCEEDED(sc->GetPresentParameters(&g_origPP))) {
-                g_haveOrigPP = true;
-                char msg[128];
-                _snprintf_s(msg, sizeof(msg), _TRUNCATE,
-                    "LoadZone: orig PP %ux%u windowed=%d refresh=%u\n",
-                    g_origPP.BackBufferWidth, g_origPP.BackBufferHeight,
-                    (int)g_origPP.Windowed, g_origPP.FullScreen_RefreshRateInHz);
-                OutputDebugStringA(msg);
-            }
-            sc->Release();
-        }
-    }
     if (!g_origWndProc) {
         g_origWndProc = (WNDPROC)SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)menuWndProc);
         if (!g_origWndProc) { OutputDebugStringA("LoadZone: SetWindowLongPtr failed.\n"); return; }
@@ -363,7 +261,6 @@ void tryInitImGui(IDirect3DDevice9* dev) {
     ImGui_ImplWin32_Init(g_gameHwnd);
     ImGui_ImplDX9_Init(dev);
     g_imguiReady = true;
-    applyHotkey(g_gameHwnd);
     OutputDebugStringA("LoadZone: ImGui ready.\n");
 }
 
@@ -373,39 +270,25 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
     return g_origEndScene(dev);
 }
 
-// Низкоуровневый хук: ловим Win+D / Win+M. Просто Win не трогаем (она открывает Пуск).
-LRESULT CALLBACK keyboardHookProc(int code, WPARAM wp, LPARAM lp) {
-    if (code == HC_ACTION) {
-        auto* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
-        bool isDown = (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN);
-        bool isUp   = (wp == WM_KEYUP   || wp == WM_SYSKEYUP);
-        if (kb->vkCode == VK_LWIN || kb->vkCode == VK_RWIN) {
-            g_winDown.store(isDown);
-        } else if (isDown && g_winDown.load()) {
-            if (kb->vkCode == 'D' || kb->vkCode == 'M') {
-                // Win+D / Win+M — просим поток окна перевести в windowed и свернуть.
-                if (g_gameHwnd) PostMessageA(g_gameHwnd, kMsgMinimize, 0, 0);
-            }
-        } else if (isUp) {
-            // ничего
-        }
-    }
-    return CallNextHookEx(g_kbHook, code, wp, lp);
-}
-
-LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // Системные сообщения всегда отдаём игре.
-    if (msg == WM_SYSCOMMAND || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
-        msg == WM_ACTIVATEAPP || msg == WM_ACTIVATE || msg == WM_NCACTIVATE ||
-        msg == WM_SIZE || msg == WM_KILLFOCUS || msg == WM_SETFOCUS) {
-        return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
-    }
-
     if (g_visible && msg == WM_INPUT) return 0;
 
-    if (g_imguiReady && g_visible &&
-        ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
+    // --- F6: переключение видимости меню ---
+    // Обрабатываем до ImGui, чтобы клавиша работала и когда меню скрыто,
+    // и чтобы F6 всегда закрывал меню даже при активном ImGui.
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && (int)wp == kMenuToggleKey) {
+        toggleMenu();
+        return 0; // съедаем клавишу, чтобы игра её не видела
+    }
+
+    // --- Esc: закрыть меню, только когда оно открыто ---
+    // До ImGui, чтобы Esc гарантированно закрывал окно.
+    if (g_visible && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wp == VK_ESCAPE) {
+        closeMenu();
+        return 0;
+    }
+
+    if (g_imguiReady && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
 
     if (msg == kMsgLoadZone) {
         int idx = (int)lp;
@@ -417,8 +300,7 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (loadZoneByName(g_entries[idx].name, err, sizeof(err))) {
                     _snprintf_s(g_status, sizeof(g_status), _TRUNCATE, "loaded: %s",
                                 g_entries[idx].name);
-                    g_visible = false;
-                    setCursorVisible(false);
+                    closeMenu();
                 } else {
                     _snprintf_s(g_status, sizeof(g_status), _TRUNCATE, "%s", err);
                     OutputDebugStringA(err);
@@ -427,49 +309,14 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
-    if (msg == kMsgMinimize) {
-        doMinimizeGame();
-        return 0;
-    }
-    if (msg == kMsgRestore) {
-        doRestoreGame();
-        return 0;
-    }
-    if (msg == WM_HOTKEY && wp == 1) {
-        g_visible = !g_visible;
-        if (g_visible) {
-            refreshList();
-            setCursorVisible(true);
-            if (GetForegroundWindow() == hwnd) SetFocus(hwnd);
-        } else {
-            setCursorVisible(false);
-        }
+    if (msg == WM_ACTIVATEAPP && wp == FALSE) {
+        // Alt+Tab: окно теряет активацию — скрываем меню и явно сворачиваем игру,
+        // чтобы она гарантированно уходила в трей.
+        closeMenu();
+        ShowWindow(hwnd, SW_MINIMIZE);
         return 0;
     }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
-}
-
-// Отслеживаем свёрнутость/восстановление, чтобы:
-// - при сворачивании спрятать меню и не рисовать;
-// - при восстановлении вернуть fullscreen (doRestoreGame).
-LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_SIZE) {
-        if (wp == SIZE_MINIMIZED) {
-            g_minimized = true;
-            g_visible = false;
-            setCursorVisible(false);
-        } else if (wp == SIZE_RESTORED || wp == SIZE_MAXIMIZED) {
-            if (g_minimized && g_wasFullscreen) {
-                // Просим вернуть fullscreen в потоке окна (мы уже в нём).
-                PostMessageA(hwnd, kMsgRestore, 0, 0);
-            } else {
-                g_minimized = false;
-            }
-        }
-    } else if (msg == WM_ACTIVATEAPP && wp == FALSE) {
-        if (g_visible) { g_visible = false; setCursorVisible(false); }
-    }
-    return menuWndProc(hwnd, msg, wp, lp);
 }
 
 bool installHooks() {
@@ -501,11 +348,6 @@ bool installHooks() {
         return false;
     }
     g_hooksInstalled = true;
-
-    // Низкоуровневый хук клавиатуры для Win+D / Win+M.
-    g_kbHook = SetWindowsHookExA(WH_KEYBOARD_LL, keyboardHookProc, GetModuleHandleA(nullptr), 0);
-    if (!g_kbHook) OutputDebugStringA("LoadZone: keyboard hook failed.\n");
-
     OutputDebugStringA("LoadZone: DX9 hooks installed.\n");
     return true;
 }
@@ -513,7 +355,6 @@ bool installHooks() {
 
 void initZoneMenu(void* moduleHandle) {
     g_self = (HMODULE)moduleHandle;
-    loadConfig();
     if (!installHooks()) {
         OutputDebugStringA("LoadZone: installHooks failed; menu will not initialize.\n");
     }
@@ -521,11 +362,7 @@ void initZoneMenu(void* moduleHandle) {
 
 void shutdownZoneMenu() {
     setCursorVisible(false);
-    g_minimized = false;
-    g_wasFullscreen = false;
-    if (g_kbHook) { UnhookWindowsHookEx(g_kbHook); g_kbHook = nullptr; }
     if (g_gameHwnd) {
-        if (g_registered) { UnregisterHotKey(g_gameHwnd, 1); g_registered = false; }
         if (g_origWndProc) { SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)g_origWndProc); g_origWndProc = nullptr; }
     }
     if (g_imguiReady) {
