@@ -194,8 +194,9 @@ void requestLoad(int idx) {
 
 bool applyReset(const D3DPRESENT_PARAMETERS& pp) {
     if (!g_device) return false;
+    D3DPRESENT_PARAMETERS local = pp; // Reset требует не-const указатель
     if (g_imguiReady) ImGui_ImplDX9_InvalidateDeviceObjects();
-    HRESULT hr = g_device->Reset(&pp);
+    HRESULT hr = g_device->Reset(&local);
     if (g_imguiReady) ImGui_ImplDX9_CreateDeviceObjects();
     return SUCCEEDED(hr);
 }
