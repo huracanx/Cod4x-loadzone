@@ -15,7 +15,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 namespace {
 constexpr wchar_t kIniName[] = L"loadzone.ini";
 constexpr const char* kGameWindowTitle = "Call of Duty 4 X"; // CoD4x
-constexpr UINT kMsgLoadZone = WM_APP + 100; // загрузка в потоке окна (игровом)
+constexpr UINT kMsgLoadZone = WM_APP + 100;
 
 struct Settings { UINT toggleKey; };
 Settings g_cfg{ VK_F6 };
@@ -73,7 +73,6 @@ void applyStyle() {
     s.FrameBorderSize   = 0.0f;
     s.WindowTitleAlign  = ImVec2(0.5f, 0.5f);
     ImVec4* c = s.Colors;
-    // Стальной/синий акцент на тёмном фоне
     c[ImGuiCol_WindowBg]        = ImVec4(0.08f, 0.09f, 0.11f, 0.97f);
     c[ImGuiCol_ChildBg]         = ImVec4(0.11f, 0.12f, 0.14f, 0.97f);
     c[ImGuiCol_PopupBg]         = ImVec4(0.08f, 0.09f, 0.11f, 0.98f);
@@ -160,10 +159,10 @@ void setCursorVisible(bool visible) {
     if (visible) {
         ClipCursor(nullptr);
         ReleaseCapture();
-        while (ShowCursor(TRUE) < 0) {}
+        SetCursor(LoadCursorA(nullptr, IDC_ARROW));
         g_cursorShown = true;
     } else {
-        while (ShowCursor(FALSE) >= 0) {}
+        SetCursor(NULL);
         g_cursorShown = false;
     }
 }
@@ -174,23 +173,13 @@ void requestLoad(int idx) {
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
 }
 
-// Корректное сворачивание игры: прячем меню, отпускаем курсор,
-// затем посылаем игре штатный SC_MINIMIZE — она сама свернётся правильно.
+// Одно штатное сворачивание. Никаких ShowWindow(SW_MINIMIZE) и
+// SetForegroundWindow(desktop) — они ломали восстановление и Alt+Tab.
 void minimizeGame() {
     if (!g_gameHwnd) return;
-    // 1. Скрыть меню и вернуть курсор игре
     g_visible = false;
     setCursorVisible(false);
-    // 2. Дать игре обработать фокус/захват
-    SetForegroundWindow(g_gameHwnd);
-    SetFocus(g_gameHwnd);
-    // 3. Штатное сворачивание через оконную процедуру игры
     PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
-    // 4. Резервный путь — если игра проигнорирует (полноэкранный D3D9)
-    ShowWindow(g_gameHwnd, SW_MINIMIZE);
-    // 5. Отдать фокус рабочему столу, чтобы панель задач была активна
-    HWND desktop = GetDesktopWindow();
-    if (desktop) SetForegroundWindow(desktop);
 }
 
 void drawMenu() {
@@ -236,6 +225,9 @@ void drawMenu() {
 
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
+    // Если окно свёрнуто — не рисуем и не копим ввод.
+    if (g_gameHwnd && IsIconic(g_gameHwnd)) return;
+
     ImGuiIO& io = ImGui::GetIO();
     if (g_visible) {
         POINT p{};
@@ -299,8 +291,19 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
 }
 
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // Системные сообщения всегда отдаём игре:
+    // Alt+Tab, Alt+F4, SC_MINIMIZE/SC_RESTORE, WM_SYSKEYDOWN/UP (Alt),
+    // активация/деактивация окна. Иначе ломаются Alt+Tab и восстановление.
+    if (msg == WM_SYSCOMMAND || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
+        msg == WM_ACTIVATEAPP || msg == WM_ACTIVATE || msg == WM_NCACTIVATE) {
+        return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
+    }
+
     if (g_visible && msg == WM_INPUT) return 0;
-    if (g_imguiReady && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
+
+    // ImGui обрабатывает ввод только когда меню видимо.
+    if (g_imguiReady && g_visible &&
+        ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
 
     if (msg == kMsgLoadZone) {
         int idx = (int)lp;
@@ -335,6 +338,8 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     if (msg == WM_ACTIVATEAPP && wp == FALSE) {
         if (g_visible) { g_visible = false; setCursorVisible(false); }
+        // ВАЖНО: пробрасываем, иначе игра не узнает о потере фокуса.
+        return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
     }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
