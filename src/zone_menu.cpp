@@ -22,6 +22,7 @@ Settings g_cfg{ VK_F6 };
 bool     g_registered = false;
 bool     g_visible    = false;
 bool     g_cursorShown = false;
+bool     g_minimized   = false;   // окно свёрнуто (WM_SIZE/SIZE_MINIMIZED)
 HMODULE  g_self       = nullptr;
 char     g_dir[MAX_PATH] = {};
 char     g_status[192] = {};
@@ -150,6 +151,9 @@ void refreshList() {
 void applyHotkey(HWND hwnd) {
     if (!hwnd) return;
     if (g_registered) { UnregisterHotKey(hwnd, 1); g_registered = false; }
+    // Win как хоткей через RegisterHotKey не регистрируется (системная клавиша),
+    // поэтому сворачивание — это Win+D / Win+M, которые ОС шлёт окну как
+    // WM_SYSCOMMAND/SC_MINIMIZE. Мы их не трогаем — они уходят в игру.
     g_registered = RegisterHotKey(hwnd, 1, 0, g_cfg.toggleKey) != 0;
     if (!g_registered) OutputDebugStringA("LoadZone: hotkey registration failed.\n");
 }
@@ -171,15 +175,6 @@ void requestLoad(int idx) {
     if (idx < 0 || idx >= g_count) return;
     if (!g_gameHwnd) return;
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
-}
-
-// Одно штатное сворачивание. Никаких ShowWindow(SW_MINIMIZE) и
-// SetForegroundWindow(desktop) — они ломали восстановление и Alt+Tab.
-void minimizeGame() {
-    if (!g_gameHwnd) return;
-    g_visible = false;
-    setCursorVisible(false);
-    PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
 }
 
 void drawMenu() {
@@ -214,8 +209,6 @@ void drawMenu() {
     if (!canLoad) ImGui::BeginDisabled();
     if (ImGui::Button("Load", ImVec2(100, 0))) requestLoad(g_sel);
     if (!canLoad) ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Minimize game", ImVec2(150, 0))) minimizeGame();
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.58f, 0.62f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
         "Enter/double-click = load   |   hotkey = toggle   |   Esc = close");
@@ -225,8 +218,8 @@ void drawMenu() {
 
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
-    // Если окно свёрнуто — не рисуем и не копим ввод.
-    if (g_gameHwnd && IsIconic(g_gameHwnd)) return;
+    // Свёрнуто — не рисуем и не копим ввод ImGui (иначе «залипает»).
+    if (g_minimized || (g_gameHwnd && IsIconic(g_gameHwnd))) return;
 
     ImGuiIO& io = ImGui::GetIO();
     if (g_visible) {
@@ -291,17 +284,17 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
 }
 
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // Системные сообщения всегда отдаём игре:
-    // Alt+Tab, Alt+F4, SC_MINIMIZE/SC_RESTORE, WM_SYSKEYDOWN/UP (Alt),
-    // активация/деактивация окна. Иначе ломаются Alt+Tab и восстановление.
+    // Системные сообщения всегда отдаём игре, чтобы Win+D / Win+M (которые ОС
+    // посылает окну как WM_SYSCOMMAND/SC_MINIMIZE), Alt+Tab, Alt+F4 и
+    // восстановление работали штатно.
     if (msg == WM_SYSCOMMAND || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
-        msg == WM_ACTIVATEAPP || msg == WM_ACTIVATE || msg == WM_NCACTIVATE) {
+        msg == WM_ACTIVATEAPP || msg == WM_ACTIVATE || msg == WM_NCACTIVATE ||
+        msg == WM_SIZE || msg == WM_KILLFOCUS || msg == WM_SETFOCUS) {
         return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
     }
 
     if (g_visible && msg == WM_INPUT) return 0;
 
-    // ImGui обрабатывает ввод только когда меню видимо.
     if (g_imguiReady && g_visible &&
         ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
 
@@ -336,12 +329,27 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
-    if (msg == WM_ACTIVATEAPP && wp == FALSE) {
-        if (g_visible) { g_visible = false; setCursorVisible(false); }
-        // ВАЖНО: пробрасываем, иначе игра не узнает о потере фокуса.
-        return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
-    }
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
+}
+
+// Отслеживаем свёрнутость на уровне оконной процедуры — до того, как
+// CallWindowProc отдаст сообщение игре. Нужно, чтобы renderFrame не трогал
+// ImGui, пока окно свёрнуто (иначе ImGui «залипает» после восстановления).
+LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_SIZE) {
+        if (wp == SIZE_MINIMIZED) {
+            g_minimized = true;
+            g_visible = false;
+            setCursorVisible(false);
+        } else if (wp == SIZE_RESTORED || wp == SIZE_MAXIMIZED) {
+            g_minimized = false;
+        }
+    } else if (msg == WM_ACTIVATEAPP && wp == FALSE) {
+        // Потеря фокуса — прячем меню и отпускаем курсор, чтобы ОС могла
+        // показать панель задач и обработать Win+D/Win+M.
+        if (g_visible) { g_visible = false; setCursorVisible(false); }
+    }
+    return menuWndProc(hwnd, msg, wp, lp);
 }
 
 bool installHooks() {
@@ -388,6 +396,7 @@ void initZoneMenu(void* moduleHandle) {
 
 void shutdownZoneMenu() {
     setCursorVisible(false);
+    g_minimized = false;
     if (g_gameHwnd) {
         if (g_registered) { UnregisterHotKey(g_gameHwnd, 1); g_registered = false; }
         if (g_origWndProc) { SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)g_origWndProc); g_origWndProc = nullptr; }
