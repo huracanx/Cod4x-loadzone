@@ -15,14 +15,17 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 namespace {
 constexpr wchar_t kIniName[] = L"loadzone.ini";
 constexpr const char* kGameWindowTitle = "Call of Duty 4 X"; // CoD4x
+
 constexpr UINT kMsgLoadZone = WM_APP + 100;
+constexpr UINT kMsgMinimize = WM_APP + 101;
+constexpr UINT kMsgRestore  = WM_APP + 102;
 
 struct Settings { UINT toggleKey; };
 Settings g_cfg{ VK_F6 };
 bool     g_registered = false;
 bool     g_visible    = false;
 bool     g_cursorShown = false;
-bool     g_minimized   = false;   // окно свёрнуто (WM_SIZE/SIZE_MINIMIZED)
+bool     g_minimized   = false;
 HMODULE  g_self       = nullptr;
 char     g_dir[MAX_PATH] = {};
 char     g_status[192] = {};
@@ -43,7 +46,17 @@ WNDPROC g_origWndProc = nullptr;
 HWND    g_gameHwnd = nullptr;
 std::atomic<bool> g_loading{false};
 
+// --- fullscreen/minimize state ---
+D3DPRESENT_PARAMETERS g_origPP{};       // исходные параметры (как создала игра)
+bool  g_haveOrigPP        = false;
+bool  g_wasFullscreen     = false;      // были ли в fullscreen до сворачивания
+bool  g_pendingMinimize   = false;      // нужно перевести в windowed + свернуть
+bool  g_pendingRestore    = false;      // нужно вернуть fullscreen
+HHOOK g_kbHook            = nullptr;
+std::atomic<bool> g_winDown{false};
+
 LRESULT CALLBACK menuWndProc(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK keyboardHookProc(int, WPARAM, LPARAM);
 void tryInitImGui(IDirect3DDevice9* dev);
 
 bool is_stock_zone(const char* nameNoExt) {
@@ -151,9 +164,6 @@ void refreshList() {
 void applyHotkey(HWND hwnd) {
     if (!hwnd) return;
     if (g_registered) { UnregisterHotKey(hwnd, 1); g_registered = false; }
-    // Win как хоткей через RegisterHotKey не регистрируется (системная клавиша),
-    // поэтому сворачивание — это Win+D / Win+M, которые ОС шлёт окну как
-    // WM_SYSCOMMAND/SC_MINIMIZE. Мы их не трогаем — они уходят в игру.
     g_registered = RegisterHotKey(hwnd, 1, 0, g_cfg.toggleKey) != 0;
     if (!g_registered) OutputDebugStringA("LoadZone: hotkey registration failed.\n");
 }
@@ -175,6 +185,69 @@ void requestLoad(int idx) {
     if (idx < 0 || idx >= g_count) return;
     if (!g_gameHwnd) return;
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
+}
+
+// --- Полноценное сворачивание эксклюзивного fullscreen D3D9 ---
+// 1. Перевести device в windowed через Reset (только в потоке окна!).
+// 2. ShowWindow(SW_MINIMIZE) — теперь окно обычное и ОС его свернёт.
+// 3. При восстановлении — Reset обратно в fullscreen.
+
+bool applyReset(const D3DPRESENT_PARAMETERS& pp) {
+    if (!g_device) return false;
+    if (g_imguiReady) ImGui_ImplDX9_InvalidateDeviceObjects();
+    HRESULT hr = g_device->Reset(&pp);
+    if (g_imguiReady) ImGui_ImplDX9_CreateDeviceObjects();
+    return SUCCEEDED(hr);
+}
+
+void doMinimizeGame() {
+    if (!g_device || !g_gameHwnd) return;
+    if (!g_haveOrigPP) return; // ещё не знаем исходный режим — игра сама справится
+    if (g_minimized) return;
+
+    // Прячем меню и курсор
+    g_visible = false;
+    setCursorVisible(false);
+
+    // Запоминаем, были ли в fullscreen (по исходным параметрам)
+    g_wasFullscreen = (g_origPP.Windowed == FALSE);
+
+    if (g_wasFullscreen) {
+        // Переводим device в windowed, чтобы окно стало обычным и ОС смогла его свернуть
+        D3DPRESENT_PARAMETERS pp = g_origPP;
+        pp.Windowed = TRUE;
+        pp.FullScreen_RefreshRateInHz = 0;
+        pp.PresentationInterval = D3DPRESENT_INTERVAL_IMMEDIATE;
+        if (!applyReset(pp)) {
+            OutputDebugStringA("LoadZone: Reset to windowed failed, fallback to SW_MINIMIZE.\n");
+            // Fallback: хотя бы попробуем штатное сворачивание
+            PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+            return;
+        }
+    }
+
+    // Теперь окно обычное — штатное сворачивание работает
+    g_minimized = true;
+    ShowWindow(g_gameHwnd, SW_MINIMIZE);
+    PostMessageA(g_gameHwnd, WM_SYSCOMMAND, SC_MINIMIZE, 0);
+}
+
+void doRestoreGame() {
+    if (!g_device || !g_gameHwnd) return;
+    if (!g_minimized) return;
+    if (!g_wasFullscreen) {
+        g_minimized = false;
+        return;
+    }
+    // Возвращаем исходный fullscreen
+    if (applyReset(g_origPP)) {
+        g_minimized = false;
+        g_wasFullscreen = false;
+    } else {
+        OutputDebugStringA("LoadZone: Reset back to fullscreen failed.\n");
+        g_minimized = false;
+        g_wasFullscreen = false;
+    }
 }
 
 void drawMenu() {
@@ -218,7 +291,6 @@ void drawMenu() {
 
 void renderFrame() {
     if (!g_imguiReady || !g_device) return;
-    // Свёрнуто — не рисуем и не копим ввод ImGui (иначе «залипает»).
     if (g_minimized || (g_gameHwnd && IsIconic(g_gameHwnd))) return;
 
     ImGuiIO& io = ImGui::GetIO();
@@ -261,6 +333,23 @@ void tryInitImGui(IDirect3DDevice9* dev) {
         g_gameHwnd = FindWindowA(nullptr, kGameWindowTitle);
         if (!g_gameHwnd) { OutputDebugStringA("LoadZone: game window not found.\n"); return; }
     }
+    // Запоминаем исходные D3DPRESENT_PARAMETERS с swapchain'а игры.
+    // Это нужно, чтобы вернуть именно тот fullscreen-режим, который был.
+    if (!g_haveOrigPP) {
+        IDirect3DSwapChain9* sc = nullptr;
+        if (SUCCEEDED(dev->GetSwapChain(0, &sc)) && sc) {
+            if (SUCCEEDED(sc->GetPresentParameters(&g_origPP))) {
+                g_haveOrigPP = true;
+                char msg[128];
+                _snprintf_s(msg, sizeof(msg), _TRUNCATE,
+                    "LoadZone: orig PP %ux%u windowed=%d refresh=%u\n",
+                    g_origPP.BackBufferWidth, g_origPP.BackBufferHeight,
+                    (int)g_origPP.Windowed, g_origPP.FullScreen_RefreshRateInHz);
+                OutputDebugStringA(msg);
+            }
+            sc->Release();
+        }
+    }
     if (!g_origWndProc) {
         g_origWndProc = (WNDPROC)SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)menuWndProc);
         if (!g_origWndProc) { OutputDebugStringA("LoadZone: SetWindowLongPtr failed.\n"); return; }
@@ -283,10 +372,29 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
     return g_origEndScene(dev);
 }
 
+// Низкоуровневый хук: ловим Win+D / Win+M. Просто Win не трогаем (она открывает Пуск).
+LRESULT CALLBACK keyboardHookProc(int code, WPARAM wp, LPARAM lp) {
+    if (code == HC_ACTION) {
+        auto* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lp);
+        bool isDown = (wp == WM_KEYDOWN || wp == WM_SYSKEYDOWN);
+        bool isUp   = (wp == WM_KEYUP   || wp == WM_SYSKEYUP);
+        if (kb->vkCode == VK_LWIN || kb->vkCode == VK_RWIN) {
+            g_winDown.store(isDown);
+        } else if (isDown && g_winDown.load()) {
+            if (kb->vkCode == 'D' || kb->vkCode == 'M') {
+                // Win+D / Win+M — просим поток окна перевести в windowed и свернуть.
+                if (g_gameHwnd) PostMessageA(g_gameHwnd, kMsgMinimize, 0, 0);
+            }
+        } else if (isUp) {
+            // ничего
+        }
+    }
+    return CallNextHookEx(g_kbHook, code, wp, lp);
+}
+
+LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // Системные сообщения всегда отдаём игре, чтобы Win+D / Win+M (которые ОС
-    // посылает окну как WM_SYSCOMMAND/SC_MINIMIZE), Alt+Tab, Alt+F4 и
-    // восстановление работали штатно.
+    // Системные сообщения всегда отдаём игре.
     if (msg == WM_SYSCOMMAND || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP ||
         msg == WM_ACTIVATEAPP || msg == WM_ACTIVATE || msg == WM_NCACTIVATE ||
         msg == WM_SIZE || msg == WM_KILLFOCUS || msg == WM_SETFOCUS) {
@@ -318,6 +426,14 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    if (msg == kMsgMinimize) {
+        doMinimizeGame();
+        return 0;
+    }
+    if (msg == kMsgRestore) {
+        doRestoreGame();
+        return 0;
+    }
     if (msg == WM_HOTKEY && wp == 1) {
         g_visible = !g_visible;
         if (g_visible) {
@@ -332,9 +448,9 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return CallWindowProcA(g_origWndProc, hwnd, msg, wp, lp);
 }
 
-// Отслеживаем свёрнутость на уровне оконной процедуры — до того, как
-// CallWindowProc отдаст сообщение игре. Нужно, чтобы renderFrame не трогал
-// ImGui, пока окно свёрнуто (иначе ImGui «залипает» после восстановления).
+// Отслеживаем свёрнутость/восстановление, чтобы:
+// - при сворачивании спрятать меню и не рисовать;
+// - при восстановлении вернуть fullscreen (doRestoreGame).
 LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (msg == WM_SIZE) {
         if (wp == SIZE_MINIMIZED) {
@@ -342,11 +458,14 @@ LRESULT CALLBACK trackedWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_visible = false;
             setCursorVisible(false);
         } else if (wp == SIZE_RESTORED || wp == SIZE_MAXIMIZED) {
-            g_minimized = false;
+            if (g_minimized && g_wasFullscreen) {
+                // Просим вернуть fullscreen в потоке окна (мы уже в нём).
+                PostMessageA(hwnd, kMsgRestore, 0, 0);
+            } else {
+                g_minimized = false;
+            }
         }
     } else if (msg == WM_ACTIVATEAPP && wp == FALSE) {
-        // Потеря фокуса — прячем меню и отпускаем курсор, чтобы ОС могла
-        // показать панель задач и обработать Win+D/Win+M.
         if (g_visible) { g_visible = false; setCursorVisible(false); }
     }
     return menuWndProc(hwnd, msg, wp, lp);
@@ -381,6 +500,11 @@ bool installHooks() {
         return false;
     }
     g_hooksInstalled = true;
+
+    // Низкоуровневый хук клавиатуры для Win+D / Win+M.
+    g_kbHook = SetWindowsHookExA(WH_KEYBOARD_LL, keyboardHookProc, GetModuleHandleA(nullptr), 0);
+    if (!g_kbHook) OutputDebugStringA("LoadZone: keyboard hook failed.\n");
+
     OutputDebugStringA("LoadZone: DX9 hooks installed.\n");
     return true;
 }
@@ -397,6 +521,8 @@ void initZoneMenu(void* moduleHandle) {
 void shutdownZoneMenu() {
     setCursorVisible(false);
     g_minimized = false;
+    g_wasFullscreen = false;
+    if (g_kbHook) { UnhookWindowsHookEx(g_kbHook); g_kbHook = nullptr; }
     if (g_gameHwnd) {
         if (g_registered) { UnregisterHotKey(g_gameHwnd, 1); g_registered = false; }
         if (g_origWndProc) { SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)g_origWndProc); g_origWndProc = nullptr; }
