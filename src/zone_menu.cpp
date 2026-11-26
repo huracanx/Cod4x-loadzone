@@ -204,23 +204,31 @@ void requestLoad(int idx) {
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
 }
 
-void drawMenu() {
-    ImGui::SetNextWindowSize(ImVec2(830, 515), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowFocus();
-    ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
-                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+enum MenuTab { Tab_Loadzone = 0, Tab_Settings, Tab_About };
+int  g_tab         = Tab_Loadzone;
+bool g_bindingKey  = false;
+
+// Кнопка-вкладка сайдбара; активная подсвечивается розовым
+void sidebarTab(const char* label, MenuTab tab) {
+    bool selected = (g_tab == tab);
+    if (selected) ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.87f, 0.65f, 0.72f, 0.30f));
+    if (ImGui::Selectable(label, selected, 0, ImVec2(0, 32))) g_tab = tab;
+    if (selected) ImGui::PopStyleColor();
+}
+
+void drawLoadzoneTab() {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
     ImGui::TextUnformatted("custom .ff files");
     ImGui::PopStyleColor();
     ImGui::Separator();
+    ImGui::Spacing();
     if (g_count == 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.65f, 1.0f));
         ImGui::TextWrapped("No custom .ff files in:\n%s",
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
     } else {
-        ImGui::BeginChild("list", ImVec2(0, -64), true);
+        ImGui::BeginChild("list", ImVec2(0, -70), true);
         for (int i = 0; i < g_count; ++i) {
             bool selected = (i == g_sel);
             if (ImGui::Selectable(g_entries[i].name, selected,
@@ -231,19 +239,99 @@ void drawMenu() {
         }
         ImGui::EndChild();
     }
-    ImGui::Separator();
+    ImGui::Spacing();
     bool canLoad = (g_sel >= 0 && g_sel < g_count);
     if (!canLoad) ImGui::BeginDisabled();
-    if (ImGui::Button("Load", ImVec2(90, 0))) requestLoad(g_sel);
+    if (ImGui::Button("Load", ImVec2(110, 34))) requestLoad(g_sel);
     if (!canLoad) ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Minimize game", ImVec2(130, 0))) {
+    if (ImGui::Button("Minimize game", ImVec2(150, 34))) {
         if (g_gameHwnd) ShowWindow(g_gameHwnd, SW_MINIMIZE);
     }
+    ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.65f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
-        "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close");
+        "Enter/double-click = load   |   Esc = close");
     ImGui::PopStyleColor();
+}
+
+void drawSettingsTab() {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
+    ImGui::TextUnformatted("settings");
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::Text("Menu toggle key: 0x%02X", g_cfg.toggleKey);
+    ImGui::Spacing();
+    if (g_bindingKey) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
+        ImGui::TextUnformatted("Press any key... (Esc to cancel)");
+        ImGui::PopStyleColor();
+        for (UINT vk = 1; vk < 0xFE; ++vk) {
+            if (!(GetAsyncKeyState(vk) & 0x8000)) continue;
+            g_bindingKey = false;
+            if (vk != VK_ESCAPE) { g_cfg.toggleKey = vk; applyHotkey(g_gameHwnd); }
+            break;
+        }
+    } else if (ImGui::Button("Change toggle key", ImVec2(180, 34))) {
+        g_bindingKey = true;
+    }
+}
+
+void drawAboutTab() {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
+    ImGui::TextUnformatted("about");
+    ImGui::PopStyleColor();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Cod4x loadzone menu");
+    ImGui::Text("Hotkey: 0x%02X (customizable in Settings)", g_cfg.toggleKey);
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.65f, 1.0f));
+    ImGui::TextWrapped("Loads custom .ff zone files from the active mod folder "
+                       "(fs_homepath/zone/<language>).");
+    ImGui::PopStyleColor();
+}
+
+void drawMenu() {
+    ImGui::SetNextWindowSize(ImVec2(960, 640), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(160, 140), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowFocus();
+    ImGui::Begin("LOADZONE", nullptr,
+                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
+
+    // ---- левый сайдбар ----
+    ImGui::BeginChild("sidebar", ImVec2(190, 0), true);
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
+    ImGui::SetWindowFontScale(1.5f);
+    ImGui::TextUnformatted("LOADZONE");
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::PopStyleColor();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.47f, 1.0f));
+    ImGui::TextUnformatted("MENU");
+    ImGui::PopStyleColor();
+    sidebarTab("Loadzone", Tab_Loadzone);
+    sidebarTab("Settings",  Tab_Settings);
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.42f, 0.47f, 1.0f));
+    ImGui::TextUnformatted("INFO");
+    ImGui::PopStyleColor();
+    sidebarTab("About", Tab_About);
+    ImGui::EndChild();
+
+    // ---- правая область с контентом ----
+    ImGui::SameLine(0, 12);
+    ImGui::BeginChild("content", ImVec2(0, 0), true);
+    switch (g_tab) {
+        case Tab_Loadzone: drawLoadzoneTab(); break;
+        case Tab_Settings: drawSettingsTab(); break;
+        case Tab_About:    drawAboutTab();    break;
+    }
+    ImGui::EndChild();
     ImGui::End();
 }
 
