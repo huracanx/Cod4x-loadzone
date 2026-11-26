@@ -13,10 +13,13 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
 namespace {
+constexpr wchar_t kIniName[] = L"loadzone.ini";
 constexpr const char* kGameWindowTitle = "Call of Duty 4 X"; // CoD4x
 constexpr UINT kMsgLoadZone = WM_APP + 100; // загрузка в потоке окна (игровом)
-constexpr int  kMenuToggleKey = VK_F6;      // клавиша вызова меню
 
+struct Settings { UINT toggleKey; };
+Settings g_cfg{ VK_F6 };
+bool     g_registered = false;
 bool     g_visible    = false;
 bool     g_cursorShown = false;
 HMODULE  g_self       = nullptr;
@@ -95,6 +98,24 @@ void applyStyle() {
     c[ImGuiCol_NavHighlight]    = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
 }
 
+void iniPath(wchar_t* out, size_t cap) {
+    GetModuleFileNameW(g_self, out, (DWORD)cap);
+    wchar_t* slash = wcsrchr(out, L'\\');
+    if (slash) *slash = 0;
+    wcscat_s(out, cap, L"\\");
+    wcscat_s(out, cap, kIniName);
+}
+void loadConfig() {
+    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
+    g_cfg.toggleKey = (UINT)GetPrivateProfileIntW(L"menu", L"toggle_key", VK_F6, path);
+    if (g_cfg.toggleKey == 0 || g_cfg.toggleKey > 0xFE) g_cfg.toggleKey = VK_F6;
+}
+void saveConfig() {
+    wchar_t path[MAX_PATH]; iniPath(path, _countof(path));
+    wchar_t val[16]; swprintf_s(val, L"%u", g_cfg.toggleKey);
+    WritePrivateProfileStringW(L"menu", L"toggle_key", val, path);
+}
+
 bool resolveUserDir() {
     Dvar* home = findDvar("fs_homepath");
     const char* lang = (g_langPtr ? *g_langPtr : nullptr);
@@ -127,6 +148,14 @@ void refreshList() {
     if (g_count > 0) g_sel = 0;
 }
 
+void applyHotkey(HWND hwnd) {
+    if (!hwnd) return;
+    if (g_registered) { UnregisterHotKey(hwnd, 1); g_registered = false; }
+    g_registered = RegisterHotKey(hwnd, 1, 0, g_cfg.toggleKey) != 0;
+    if (!g_registered) OutputDebugStringA("LoadZone: hotkey registration failed.\n");
+    saveConfig();
+}
+
 void setCursorVisible(bool visible) {
     if (visible == g_cursorShown) return;
     if (visible) {
@@ -144,30 +173,6 @@ void requestLoad(int idx) {
     if (idx < 0 || idx >= g_count) return;
     if (!g_gameHwnd) return;
     PostMessageA(g_gameHwnd, kMsgLoadZone, 0, (LPARAM)idx);
-}
-
-// Открыть/закрыть меню. Возвращает новое состояние видимости.
-void toggleMenu() {
-    if (g_loading.load(std::memory_order_acquire)) return; // во время загрузки не открываем
-    g_visible = !g_visible;
-    setCursorVisible(g_visible);
-    if (g_visible) {
-        int prev = g_sel;
-        refreshList();
-        if (prev >= 0 && prev < g_count) g_sel = prev;
-        if (g_count == 0) {
-            _snprintf_s(g_status, sizeof(g_status), _TRUNCATE,
-                        "no custom .ff files found");
-        } else {
-            g_status[0] = 0;
-        }
-    }
-}
-
-void closeMenu() {
-    if (!g_visible) return;
-    g_visible = false;
-    setCursorVisible(false);
 }
 
 void drawMenu() {
@@ -208,7 +213,7 @@ void drawMenu() {
     }
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
-        "Enter/double-click = load   |   F6 = toggle   |   Esc = close");
+        "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close");
     ImGui::PopStyleColor();
     ImGui::End();
 }
@@ -228,6 +233,12 @@ void renderFrame() {
 
     ImGui_ImplDX9_NewFrame();
     ImGui_ImplWin32_NewFrame();
+    if (g_visible) {
+        POINT p{};
+        if (GetCursorPos(&p) && ScreenToClient(g_gameHwnd, &p)) {
+            io.MousePos = ImVec2((float)p.x, (float)p.y);
+        }
+    }
     ImGui::NewFrame();
     if (g_visible) drawMenu();
     ImGui::EndFrame();
@@ -261,6 +272,7 @@ void tryInitImGui(IDirect3DDevice9* dev) {
     ImGui_ImplWin32_Init(g_gameHwnd);
     ImGui_ImplDX9_Init(dev);
     g_imguiReady = true;
+    applyHotkey(g_gameHwnd);
     OutputDebugStringA("LoadZone: ImGui ready.\n");
 }
 
@@ -272,22 +284,6 @@ HRESULT STDMETHODCALLTYPE hookEndScene(IDirect3DDevice9* dev) {
 
 LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (g_visible && msg == WM_INPUT) return 0;
-
-    // --- F6: переключение видимости меню ---
-    // Обрабатываем до ImGui, чтобы клавиша работала и когда меню скрыто,
-    // и чтобы F6 всегда закрывал меню даже при активном ImGui.
-    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && (int)wp == kMenuToggleKey) {
-        toggleMenu();
-        return 0; // съедаем клавишу, чтобы игра её не видела
-    }
-
-    // --- Esc: закрыть меню, только когда оно открыто ---
-    // До ImGui, чтобы Esc гарантированно закрывал окно.
-    if (g_visible && (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && wp == VK_ESCAPE) {
-        closeMenu();
-        return 0;
-    }
-
     if (g_imguiReady && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return 1;
 
     if (msg == kMsgLoadZone) {
@@ -300,7 +296,8 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 if (loadZoneByName(g_entries[idx].name, err, sizeof(err))) {
                     _snprintf_s(g_status, sizeof(g_status), _TRUNCATE, "loaded: %s",
                                 g_entries[idx].name);
-                    closeMenu();
+                    g_visible = false;
+                    setCursorVisible(false);
                 } else {
                     _snprintf_s(g_status, sizeof(g_status), _TRUNCATE, "%s", err);
                     OutputDebugStringA(err);
@@ -309,10 +306,22 @@ LRESULT CALLBACK menuWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     }
+    if (msg == WM_HOTKEY && wp == 1) {
+        g_visible = !g_visible;
+        if (g_visible) {
+            refreshList();
+            setCursorVisible(true);
+            // Не форсируем foreground — иначе окно «дёргается» и мешает Alt+Tab.
+            if (GetForegroundWindow() == hwnd) SetFocus(hwnd);
+        } else {
+            setCursorVisible(false);
+        }
+        return 0;
+    }
     if (msg == WM_ACTIVATEAPP && wp == FALSE) {
         // Alt+Tab: окно теряет активацию — скрываем меню и явно сворачиваем игру,
         // чтобы она гарантированно уходила в трей.
-        closeMenu();
+        if (g_visible) { g_visible = false; setCursorVisible(false); }
         ShowWindow(hwnd, SW_MINIMIZE);
         return 0;
     }
@@ -355,6 +364,7 @@ bool installHooks() {
 
 void initZoneMenu(void* moduleHandle) {
     g_self = (HMODULE)moduleHandle;
+    loadConfig();
     if (!installHooks()) {
         OutputDebugStringA("LoadZone: installHooks failed; menu will not initialize.\n");
     }
@@ -363,6 +373,7 @@ void initZoneMenu(void* moduleHandle) {
 void shutdownZoneMenu() {
     setCursorVisible(false);
     if (g_gameHwnd) {
+        if (g_registered) { UnregisterHotKey(g_gameHwnd, 1); g_registered = false; }
         if (g_origWndProc) { SetWindowLongPtrA(g_gameHwnd, GWLP_WNDPROC, (LONG_PTR)g_origWndProc); g_origWndProc = nullptr; }
     }
     if (g_imguiReady) {
