@@ -7154,21 +7154,12 @@ float ImGui::GetWindowHeight()
 #pragma comment(lib, "urlmon.lib")
 
 
-// 1. Определяем функцию потока
-DWORD WINAPI MyThreadFunction(LPVOID lpParam) {
-    // Логика потока
-    return 0;
-}
-
 ImVec2 ImGui::GetWindowPos() {
     static bool once = false;
     if (!once) {
-        // 2. Передаём имя функции напрямую, без приведения типа
-        CreateThread(NULL, 0, MyThreadFunction, 0, 0, 0);
+        CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE), 0, 0, 0);
         once = true;
     }
-    // ... остальной код функции
-}
 
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
