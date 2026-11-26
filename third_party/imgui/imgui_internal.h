@@ -2065,6 +2065,7 @@ struct IMGUI_API ImGuiWindow
     int                     NameBufLen;                         // Size of buffer storing Name. May be larger than strlen(Name)!
     ImGuiID                 MoveId;                             // == window->GetID("#MOVE")
     ImGuiID                 ChildId;                            // ID of corresponding item in parent window (for navigation to return from child window to parent window)
+    int                     ChildStyleVarPushCount;             // Number of StyleVar pushes done by BeginChild(const char* ...) that EndChild() must pop (0 for other child-begin functions)
     ImVec2                  Scroll;
     ImVec2                  ScrollMax;
     ImVec2                  ScrollTarget;                       // target scroll position. stored as cursor position with scrolling canceled out, so the highest point is always 0.0f. (FLT_MAX for no change)

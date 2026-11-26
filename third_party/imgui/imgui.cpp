@@ -5259,7 +5259,12 @@ bool ImGui::BeginChild(const char* str_id, const ImVec2& size_arg, bool border, 
     ImGuiWindow* window = GetCurrentWindow();
     PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(23, 8));
     PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 8));
-    return BeginChildEx(str_id, window->GetID(str_id), size_arg, border, extra_flags | ImGuiWindowFlags_AlwaysUseWindowPadding | ImGuiWindowFlags_NoMove);
+    bool ret = BeginChildEx(str_id, window->GetID(str_id), size_arg, border, extra_flags | ImGuiWindowFlags_AlwaysUseWindowPadding | ImGuiWindowFlags_NoMove);
+    // EndChild() по этому счётчику сделает парный PopStyleVar — без него стек
+    // StyleVar не возвращается к размеру родительского окна, и End() падает на
+    // IM_ASSERT "PushStyleVar/PopStyleVar Mismatch!".
+    GetCurrentWindow()->ChildStyleVarPushCount += 2;
+    return ret;
 }
 
 bool ImGui::BeginChild(ImGuiID id, const ImVec2& size_arg, bool border, ImGuiWindowFlags extra_flags)
@@ -5307,6 +5312,14 @@ void ImGui::EndChild()
             // Not navigable into
             ItemAdd(bb, 0);
         }
+    }
+    // Парный Pop к PushStyleVar(2) в BeginChild(const char* ...). Только та
+    // перегрузка устанавливает ChildStyleVarPushCount; BeginChild(ImGuiID)/MenuChild/
+    // BeginChildFrame ничего не пушат — для них счётчик равен 0.
+    if (window->ChildStyleVarPushCount > 0)
+    {
+        PopStyleVar(window->ChildStyleVarPushCount);
+        window->ChildStyleVarPushCount = 0;
     }
     g.WithinEndChild = false;
 }
