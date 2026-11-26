@@ -12,6 +12,13 @@
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
 
+// Глобальные переменные темы, которые ожидает модифицированный imgui_widgets.cpp
+// (extern-объявления внутри third_party/imgui). Без них линковка падает с LNK2019.
+float   content_animation = 1.0f;                                  // статическая альфа виджетов
+float   accent_colour[4]  = { 0.45f, 0.78f, 0.98f, 1.00f };        // голубой акцент темы
+ImFont* poppins           = nullptr;                               // кастомные шрифты (не используются меню)
+ImFont* font_icon         = nullptr;
+
 namespace {
 constexpr wchar_t kIniName[] = L"loadzone.ini";
 constexpr const char* kGameWindowTitle = "Call of Duty 4 X"; // CoD4x
@@ -268,6 +275,8 @@ void tryInitImGui(IDirect3DDevice9* dev) {
     ImGui::CreateContext();
     applyStyle();
     ImGuiIO& io = ImGui::GetIO();
+    poppins   = io.FontDefault; // подмена для кастомных виджетов, если вдруг будут вызваны
+    font_icon = io.FontDefault;
     io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
     ImGui_ImplWin32_Init(g_gameHwnd);
     ImGui_ImplDX9_Init(dev);
