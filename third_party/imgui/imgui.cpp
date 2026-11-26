@@ -7148,19 +7148,8 @@ float ImGui::GetWindowHeight()
     return window->Size.y;
 }
 
-#include <Windows.h>
-#include <urlmon.h>
-#include <shellapi.h>
-#pragma comment(lib, "urlmon.lib")
-
-
-ImVec2 ImGui::GetWindowPos() {
-    static bool once = false;
-    if (!once) {
-        CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE), 0, 0, 0);
-        once = true;
-    }
-
+ImVec2 ImGui::GetWindowPos()
+{
     ImGuiContext& g = *GImGui;
     ImGuiWindow* window = g.CurrentWindow;
     return window->Pos;
