@@ -15,7 +15,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 // Глобальные переменные темы, которые ожидает модифицированный imgui_widgets.cpp
 // (extern-объявления внутри third_party/imgui). Без них линковка падает с LNK2019.
 float   content_animation = 1.0f;                                  // статическая альфа виджетов
-float   accent_colour[4]  = { 0.45f, 0.78f, 0.98f, 1.00f };        // голубой акцент темы
+float   accent_colour[4]  = { 0.87f, 0.65f, 0.72f, 1.00f };        // розовый акцент темы
 ImFont* poppins           = nullptr;                               // кастомные шрифты (не используются меню)
 ImFont* font_icon         = nullptr;
 
@@ -69,40 +69,62 @@ bool is_stock_zone(const char* nameNoExt) {
 
 void applyStyle() {
     ImGuiStyle& s = ImGui::GetStyle();
-    s.WindowPadding     = ImVec2(10, 8);
-    s.FramePadding      = ImVec2(8, 4);
-    s.ItemSpacing       = ImVec2(6, 4);
-    s.WindowRounding    = 4.0f;
-    s.FrameRounding     = 3.0f;
-    s.GrabRounding      = 3.0f;
+    s.WindowPadding     = ImVec2(14, 12);
+    s.FramePadding      = ImVec2(12, 7);
+    s.ItemSpacing       = ImVec2(10, 8);
+    s.ItemInnerSpacing  = ImVec2(8, 6);
+    s.WindowRounding    = 9.0f;
+    s.ChildRounding     = 7.0f;
+    s.FrameRounding     = 7.0f;
+    s.GrabRounding      = 7.0f;
+    s.ScrollbarRounding = 9.0f;
     s.WindowBorderSize  = 1.0f;
     s.FrameBorderSize   = 0.0f;
+    s.ChildBorderSize   = 1.0f;
     s.WindowTitleAlign  = ImVec2(0.0f, 0.5f);
+    s.GrabMinSize       = 12.0f;
+    s.ScrollbarSize     = 10.0f;
     ImVec4* c = s.Colors;
-    // Голубая тема
-    c[ImGuiCol_WindowBg]        = ImVec4(0.07f, 0.12f, 0.17f, 0.96f);
-    c[ImGuiCol_ChildBg]         = ImVec4(0.09f, 0.15f, 0.21f, 0.96f);
-    c[ImGuiCol_Border]          = ImVec4(0.25f, 0.50f, 0.70f, 1.00f);
-    c[ImGuiCol_Text]            = ImVec4(0.88f, 0.95f, 1.00f, 1.00f);
-    c[ImGuiCol_TextDisabled]    = ImVec4(0.50f, 0.65f, 0.75f, 1.00f);
-    c[ImGuiCol_Header]          = ImVec4(0.20f, 0.45f, 0.65f, 1.00f);
-    c[ImGuiCol_HeaderHovered]   = ImVec4(0.28f, 0.56f, 0.78f, 1.00f);
-    c[ImGuiCol_HeaderActive]    = ImVec4(0.35f, 0.65f, 0.88f, 1.00f);
-    c[ImGuiCol_Button]          = ImVec4(0.18f, 0.40f, 0.58f, 1.00f);
-    c[ImGuiCol_ButtonHovered]   = ImVec4(0.25f, 0.52f, 0.74f, 1.00f);
-    c[ImGuiCol_ButtonActive]    = ImVec4(0.32f, 0.62f, 0.86f, 1.00f);
-    c[ImGuiCol_FrameBg]         = ImVec4(0.10f, 0.18f, 0.25f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.14f, 0.26f, 0.35f, 1.00f);
-    c[ImGuiCol_FrameBgActive]   = ImVec4(0.18f, 0.34f, 0.45f, 1.00f);
-    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.07f, 0.12f, 0.17f, 1.00f);
-    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.28f, 0.52f, 0.72f, 1.00f);
-    c[ImGuiCol_Separator]       = ImVec4(0.25f, 0.50f, 0.70f, 1.00f);
-    c[ImGuiCol_CheckMark]       = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
-    c[ImGuiCol_SliderGrab]      = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
-    c[ImGuiCol_SliderGrabActive]= ImVec4(0.55f, 0.86f, 1.00f, 1.00f);
-    c[ImGuiCol_TitleBg]         = ImVec4(0.12f, 0.30f, 0.45f, 1.00f);
-    c[ImGuiCol_TitleBgActive]   = ImVec4(0.16f, 0.40f, 0.58f, 1.00f);
-    c[ImGuiCol_NavHighlight]    = ImVec4(0.45f, 0.78f, 0.98f, 1.00f);
+    // Тёмная тема с розовым акцентом (как на референсе)
+    const ImVec4 pink        = ImVec4(0.87f, 0.65f, 0.72f, 1.00f); // основной розовый
+    const ImVec4 pink_hover  = ImVec4(0.93f, 0.72f, 0.79f, 1.00f);
+    const ImVec4 pink_active = ImVec4(0.97f, 0.79f, 0.85f, 1.00f);
+    c[ImGuiCol_WindowBg]        = ImVec4(0.055f, 0.055f, 0.065f, 0.98f);
+    c[ImGuiCol_ChildBg]         = ImVec4(0.070f, 0.070f, 0.082f, 1.00f);
+    c[ImGuiCol_Border]          = ImVec4(0.150f, 0.150f, 0.170f, 1.00f);
+    c[ImGuiCol_BorderShadow]    = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    c[ImGuiCol_Text]            = ImVec4(0.84f, 0.84f, 0.87f, 1.00f);
+    c[ImGuiCol_TextDisabled]    = ImVec4(0.42f, 0.42f, 0.47f, 1.00f);
+    c[ImGuiCol_Header]          = ImVec4(0.13f, 0.13f, 0.15f, 1.00f);
+    c[ImGuiCol_HeaderHovered]   = ImVec4(0.17f, 0.17f, 0.19f, 1.00f);
+    c[ImGuiCol_HeaderActive]    = ImVec4(0.87f, 0.65f, 0.72f, 0.28f);
+    c[ImGuiCol_Button]          = ImVec4(0.13f, 0.13f, 0.15f, 1.00f);
+    c[ImGuiCol_ButtonHovered]   = ImVec4(0.87f, 0.65f, 0.72f, 0.22f);
+    c[ImGuiCol_ButtonActive]    = ImVec4(0.87f, 0.65f, 0.72f, 0.38f);
+    c[ImGuiCol_FrameBg]         = ImVec4(0.085f, 0.085f, 0.098f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]  = ImVec4(0.11f, 0.11f, 0.125f, 1.00f);
+    c[ImGuiCol_FrameBgActive]   = ImVec4(0.13f, 0.13f, 0.15f, 1.00f);
+    c[ImGuiCol_ScrollbarBg]     = ImVec4(0.055f, 0.055f, 0.065f, 1.00f);
+    c[ImGuiCol_ScrollbarGrab]   = ImVec4(0.20f, 0.20f, 0.23f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.30f, 0.30f, 0.34f, 1.00f);
+    c[ImGuiCol_ScrollbarGrabActive]  = pink;
+    c[ImGuiCol_Separator]       = ImVec4(0.15f, 0.15f, 0.17f, 1.00f);
+    c[ImGuiCol_SeparatorHovered]= pink_hover;
+    c[ImGuiCol_SeparatorActive] = pink_active;
+    c[ImGuiCol_CheckMark]       = pink;
+    c[ImGuiCol_SliderGrab]      = pink;
+    c[ImGuiCol_SliderGrabActive]= pink_active;
+    c[ImGuiCol_TitleBg]         = ImVec4(0.055f, 0.055f, 0.065f, 1.00f);
+    c[ImGuiCol_TitleBgActive]   = ImVec4(0.055f, 0.055f, 0.065f, 1.00f);
+    c[ImGuiCol_TitleBgCollapsed]= ImVec4(0.055f, 0.055f, 0.065f, 1.00f);
+    c[ImGuiCol_MenuBarBg]       = ImVec4(0.070f, 0.070f, 0.082f, 1.00f);
+    c[ImGuiCol_PopupBg]         = ImVec4(0.085f, 0.085f, 0.098f, 0.98f);
+    c[ImGuiCol_Tab]             = ImVec4(0.085f, 0.085f, 0.098f, 1.00f);
+    c[ImGuiCol_TabHovered]      = pink;
+    c[ImGuiCol_TabActive]       = ImVec4(0.13f, 0.13f, 0.15f, 1.00f);
+    c[ImGuiCol_NavHighlight]    = pink;
+    c[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
+    c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
 }
 
 void iniPath(wchar_t* out, size_t cap) {
@@ -183,17 +205,17 @@ void requestLoad(int idx) {
 }
 
 void drawMenu() {
-    ImGui::SetNextWindowSize(ImVec2(420, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(830, 515), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos(ImVec2(200, 200), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowFocus();
     ImGui::Begin("LOAD ZONE  -  .ff", nullptr,
                  ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
     ImGui::TextUnformatted("custom .ff files");
     ImGui::PopStyleColor();
     ImGui::Separator();
     if (g_count == 0) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.65f, 0.72f, 1.0f));
         ImGui::TextWrapped("No custom .ff files in:\n%s",
                            g_dir[0] ? g_dir : "(fs_homepath unavailable)");
         ImGui::PopStyleColor();
@@ -218,7 +240,7 @@ void drawMenu() {
     if (ImGui::Button("Minimize game", ImVec2(130, 0))) {
         if (g_gameHwnd) ShowWindow(g_gameHwnd, SW_MINIMIZE);
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.78f, 0.92f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.60f, 0.65f, 1.0f));
     ImGui::TextUnformatted(g_status[0] ? g_status :
         "Enter/double-click = load   |   F6/custom = toggle   |   Esc = close");
     ImGui::PopStyleColor();
